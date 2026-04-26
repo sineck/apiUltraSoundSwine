@@ -11,6 +11,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from sklearn.metrics import precision_score, recall_score, roc_auc_score
 
 from anomaly_lib import (
     ImageRow,
@@ -36,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=root / "outputs" / "report")
     parser.add_argument("--grid-size", type=int, default=8)
     parser.add_argument("--top-heatmap-cells", type=int, default=8)
+    parser.add_argument("--detail-heatmaps", choices=["none", "active", "all"], default="active")
     parser.add_argument("--batch-size", type=int, default=24)
     return parser.parse_args()
 
@@ -287,6 +289,12 @@ figcaption {
   padding: 10px;
 }
 .thumb img { aspect-ratio: 4 / 3; }
+.thumb-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.thumb-pair figcaption { margin-top: 4px; }
 .topbar {
   display: flex;
   align-items: center;
@@ -298,6 +306,7 @@ figcaption {
   .summary { grid-template-columns: 1fr 1fr; }
   .methods { grid-template-columns: 1fr; }
   .figures { grid-template-columns: 1fr; }
+  .thumb-pair { grid-template-columns: 1fr; }
   .topbar { display: block; }
 }
 """
@@ -305,6 +314,10 @@ figcaption {
 
 def metric_cell(value: float) -> str:
     return f"{value:.4f}"
+
+
+def optional_metric_cell(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.4f}"
 
 
 def method_rank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -320,6 +333,26 @@ def method_rank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def expected_label(actual_target: int) -> str:
     return "pregnant" if int(actual_target) == 1 else "no_pregnant"
+
+
+def classification_metrics(rows: list[dict[str, Any]]) -> dict[str, float | None]:
+    y_true = np.asarray([0 if row["actual"] == "no_pregnant" else 1 for row in rows], dtype=np.int64)
+    y_pred = np.asarray([0 if row["prediction"] == "no_pregnant" else 1 for row in rows], dtype=np.int64)
+    no_pregnant_scores = np.asarray([row["score_no_pregnant"] for row in rows], dtype=np.float64)
+    no_pregnant_true = (y_true == 0).astype(np.int64)
+    auc_no_pregnant: float | None
+    if len(np.unique(no_pregnant_true)) == 2:
+        auc_no_pregnant = float(roc_auc_score(no_pregnant_true, no_pregnant_scores))
+    else:
+        auc_no_pregnant = None
+
+    return {
+        "auc_no_pregnant": auc_no_pregnant,
+        "precision_no_pregnant": float(precision_score(y_true, y_pred, pos_label=0, zero_division=0)),
+        "recall_no_pregnant": float(recall_score(y_true, y_pred, pos_label=0, zero_division=0)),
+        "precision_pregnant": float(precision_score(y_true, y_pred, pos_label=1, zero_division=0)),
+        "recall_pregnant": float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)),
+    }
 
 
 def model_page_name(model_key: str) -> str:
@@ -356,6 +389,7 @@ def build_model_test_results(model_result: dict[str, Any]) -> dict[str, Any]:
         "total": len(rows),
         "correct": correct,
         "incorrect": len(rows) - correct,
+        "metrics": classification_metrics(rows),
         "rows": rows,
     }
 
@@ -377,16 +411,74 @@ def build_test_thumbnails(rows: list[dict[str, Any]], output_dir: Path) -> dict[
     return thumbnails
 
 
-def render_model_detail_html(model_result: dict[str, Any], test_results: dict[str, Any], thumbnails: dict[str, str], page_dir: Path) -> str:
+def rows_to_image_rows(rows: list[dict[str, Any]]) -> list[ImageRow]:
+    return [
+        ImageRow(
+            path=Path(row["source_path"]),
+            split="test",
+            label_name=str(row["actual"]),
+            target=0 if row["actual"] == "no_pregnant" else 1,
+        )
+        for row in rows
+    ]
+
+
+def build_detail_heatmaps(
+    model_result: dict[str, Any],
+    bundle: dict[str, Any],
+    rows: list[dict[str, Any]],
+    output_dir: Path,
+    grid_size: int,
+    top_cells: int,
+    batch_size: int,
+) -> dict[str, str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    heatmaps: dict[str, str] = {}
+    feature_set = model_result["feature_set"]
+    with tempfile.TemporaryDirectory() as temp_name:
+        temp_dir = Path(temp_name)
+        for idx, row in enumerate(rows_to_image_rows(rows), start=1):
+            rows_for_heatmap, cells, original = make_occlusion_rows(row, temp_dir / f"{idx:03d}", grid_size)
+            if feature_set == "patch_handcrafted":
+                features = extract_patch_handcrafted(rows_for_heatmap)
+            else:
+                features = get_feature_matrix(rows_for_heatmap, feature_set, batch_size=batch_size)
+            _, _, heatmap_grid = score_sample_with_heatmap(bundle, features, cells, grid_size)
+            safe_stem = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in row.path.stem)[:80]
+            out_path = output_dir / f"{idx:03d}_{safe_stem}_heatmap.jpg"
+            build_overlay(original, heatmap_grid, out_path, top_cells)
+            heatmaps[str(row.path)] = str(out_path)
+    return heatmaps
+
+
+def render_model_detail_html(
+    model_result: dict[str, Any],
+    test_results: dict[str, Any],
+    thumbnails: dict[str, str],
+    detail_heatmaps: dict[str, dict[str, str]],
+    page_dir: Path,
+) -> str:
     cards = []
+    model_heatmaps = detail_heatmaps.get(model_result["model_key"], {})
     for row in test_results["rows"]:
         thumb = thumbnails.get(row["source_path"], "")
         image_rel = Path(os.path.relpath(thumb, page_dir)).as_posix() if thumb else ""
+        heatmap = model_heatmaps.get(row["source_path"], "")
+        heatmap_rel = Path(os.path.relpath(heatmap, page_dir)).as_posix() if heatmap else ""
         status_class = "pass" if row["passed"] else "fail"
         status_label = "ถูก" if row["passed"] else "ผิด"
+        if heatmap_rel:
+            image_html = (
+                "<div class='thumb-pair'>"
+                f"<figure><img src='{html.escape(image_rel)}' alt='Input {html.escape(row['filename'])}'><figcaption>ภาพที่โมเดลเห็น</figcaption></figure>"
+                f"<figure><img src='{html.escape(heatmap_rel)}' alt='Heatmap {html.escape(row['filename'])}'><figcaption>Heatmap</figcaption></figure>"
+                "</div>"
+            )
+        else:
+            image_html = f"<img src='{html.escape(image_rel)}' alt='{html.escape(row['filename'])}'>"
         cards.append(
             "<article class='thumb'>"
-            f"<img src='{html.escape(image_rel)}' alt='{html.escape(row['filename'])}'>"
+            f"{image_html}"
             f"<h3>{html.escape(row['filename'])}</h3>"
             f"<p class='small'>จริง: <b>{html.escape(row['actual'])}</b><br>"
             f"ทำนาย: <b>{html.escape(row['prediction'])}</b><br>"
@@ -418,10 +510,13 @@ def render_model_detail_html(model_result: dict[str, Any], test_results: dict[st
     <section class="summary">
       <div class="metric"><span class="muted">Feature</span><strong>{html.escape(model_result['feature_set'])}</strong></div>
       <div class="metric"><span class="muted">Test balanced</span><strong>{metric_cell(model_result['test']['balanced_accuracy'])}</strong></div>
+      <div class="metric"><span class="muted">AUC ไม่ท้อง</span><strong>{optional_metric_cell(test_results['metrics']['auc_no_pregnant'])}</strong></div>
+      <div class="metric"><span class="muted">Recall ไม่ท้อง</span><strong>{metric_cell(test_results['metrics']['recall_no_pregnant'])}</strong></div>
       <div class="metric"><span class="muted">ถูก</span><strong>{test_results['correct']} / {test_results['total']}</strong></div>
       <div class="metric"><span class="muted">ผิด</span><strong>{test_results['incorrect']}</strong></div>
     </section>
     <p class="note">ค่าคะแนน `score no-pregnant` ยิ่งสูง หมายถึงโมเดลเอนเอียงไปทางไม่ท้องมากขึ้น เมื่อคะแนนสูงกว่า threshold จะทำนายเป็น no_pregnant</p>
+    <p class="note">ถ้าการ์ดมี Heatmap แสดงว่ารูปนั้นถูกคำนวณ occlusion heatmap แล้ว สีสว่างคือบริเวณที่ปิดทับแล้วคะแนนเปลี่ยนมาก</p>
     <h2>รูปทั้งหมดของโมเดลนี้</h2>
     <section class="gallery">{''.join(cards)}</section>
   </main>
@@ -434,6 +529,7 @@ def write_model_detail_pages(
     ranked_results: list[dict[str, Any]],
     model_tests: dict[str, dict[str, Any]],
     thumbnails: dict[str, str],
+    detail_heatmaps: dict[str, dict[str, str]],
     output_dir: Path,
 ) -> None:
     page_dir = output_dir / "models"
@@ -441,7 +537,7 @@ def write_model_detail_pages(
     for result in ranked_results:
         page_path = page_dir / model_page_name(result["model_key"])
         page_path.write_text(
-            render_model_detail_html(result, model_tests[result["model_key"]], thumbnails, page_dir),
+            render_model_detail_html(result, model_tests[result["model_key"]], thumbnails, detail_heatmaps, page_dir),
             encoding="utf-8",
         )
 
@@ -450,6 +546,7 @@ def render_html(report: dict[str, Any], output_dir: Path) -> str:
     active_model = report["active_model"]
     rows = []
     for item in report["ranked_results"]:
+        test_metrics = report["model_test_results"][item["model_key"]]["metrics"]
         active_badge = " <span class='badge good'>ACTIVE</span>" if item["model_key"] == active_model else ""
         rows.append(
             "<tr>"
@@ -457,6 +554,9 @@ def render_html(report: dict[str, Any], output_dir: Path) -> str:
             f"<td>{html.escape(item['feature_set'])}</td>"
             f"<td>{metric_cell(item['validate']['balanced_accuracy'])}</td>"
             f"<td>{metric_cell(item['test']['balanced_accuracy'])}</td>"
+            f"<td>{optional_metric_cell(test_metrics['auc_no_pregnant'])}</td>"
+            f"<td>{metric_cell(test_metrics['recall_no_pregnant'])}</td>"
+            f"<td>{metric_cell(test_metrics['precision_no_pregnant'])}</td>"
             f"<td>{metric_cell(item['test']['f1_no_pregnant'])}</td>"
             f"<td>{html.escape(str(item['test']['confusion_matrix']))}</td>"
             f"<td>{item['threshold']:.6g}</td>"
@@ -508,6 +608,7 @@ def render_html(report: dict[str, Any], output_dir: Path) -> str:
         )
 
     active_test = report["active_test_results"]
+    active_metrics = active_test["metrics"]
     active_rows = []
     for row in active_test["rows"]:
         status_class = "pass" if row["passed"] else "fail"
@@ -541,7 +642,10 @@ def render_html(report: dict[str, Any], output_dir: Path) -> str:
       <div class="metric"><span class="muted">โมเดลที่แนะนำ</span><strong>{html.escape(active_model)}</strong></div>
       <div class="metric"><span class="muted">คะแนน validate</span><strong>{metric_cell(report['best']['validate']['balanced_accuracy'])}</strong></div>
       <div class="metric"><span class="muted">คะแนน test</span><strong>{metric_cell(report['best']['test']['balanced_accuracy'])}</strong></div>
-      <div class="metric"><span class="muted">F1 กลุ่มไม่ท้อง</span><strong>{metric_cell(report['best']['test']['f1_no_pregnant'])}</strong></div>
+      <div class="metric"><span class="muted">AUC ไม่ท้อง</span><strong>{optional_metric_cell(active_metrics['auc_no_pregnant'])}</strong></div>
+      <div class="metric"><span class="muted">Recall ไม่ท้อง</span><strong>{metric_cell(active_metrics['recall_no_pregnant'])}</strong></div>
+      <div class="metric"><span class="muted">Precision ไม่ท้อง</span><strong>{metric_cell(active_metrics['precision_no_pregnant'])}</strong></div>
+      <div class="metric"><span class="muted">F1 ไม่ท้อง</span><strong>{metric_cell(report['best']['test']['f1_no_pregnant'])}</strong></div>
     </section>
     <p class="small">{html.escape(' | '.join(dataset_bits))}</p>
     <p class="note">อ่านแบบเร็ว: ดูโมเดลที่แนะนำด้านบนก่อน ถ้าต้องการตรวจรูปทั้งหมดของวิธีใด ให้กดปุ่ม “ดูรูปทั้งหมด” ในตารางเปรียบเทียบ</p>
@@ -554,6 +658,9 @@ def render_html(report: dict[str, Any], output_dir: Path) -> str:
           <th>ตัวเข้ารหัสภาพ</th>
           <th>Validate</th>
           <th>Test</th>
+          <th>AUC ไม่ท้อง</th>
+          <th>Recall ไม่ท้อง</th>
+          <th>Precision ไม่ท้อง</th>
           <th>F1 ไม่ท้อง</th>
           <th>Confusion Matrix</th>
           <th>Threshold</th>
@@ -566,6 +673,7 @@ def render_html(report: dict[str, Any], output_dir: Path) -> str:
     <h2>ผลทดสอบของโมเดลที่เลือก</h2>
     <section class="metric">
       <p><b>{html.escape(active_test['model_key'])}</b> ทดสอบกับรูปในชุด test ที่มี label ทั้งหมด {active_test['total']} รูป: ทายถูก {active_test['correct']} รูป, ทายผิด {active_test['incorrect']} รูป</p>
+      <p class="small" style="margin-top:8px;">AUC ไม่ท้อง: <b>{optional_metric_cell(active_metrics['auc_no_pregnant'])}</b> | Recall ไม่ท้อง: <b>{metric_cell(active_metrics['recall_no_pregnant'])}</b> | Precision ไม่ท้อง: <b>{metric_cell(active_metrics['precision_no_pregnant'])}</b> | Recall ท้อง: <b>{metric_cell(active_metrics['recall_pregnant'])}</b></p>
       <table style="margin-top:12px;">
         <thead>
           <tr>
@@ -604,6 +712,7 @@ def main() -> None:
     output_dir = args.output_dir
     report_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     heatmap_dir = output_dir / f"heatmaps_{run_name}_{report_stamp}"
+    detail_heatmap_dir = output_dir / f"detail_heatmaps_{run_name}_{report_stamp}"
     input_dir = output_dir / f"cleaned_inputs_{run_name}_{report_stamp}"
     thumbnail_dir = output_dir / f"test_thumbnails_{run_name}_{report_stamp}"
     if output_dir.exists():
@@ -615,9 +724,22 @@ def main() -> None:
     active_result = next(item for item in ranked_results if item["model_key"] == active_model)
     model_tests = {item["model_key"]: build_model_test_results(item) for item in ranked_results}
     thumbnails = build_test_thumbnails(model_tests[active_model]["rows"], thumbnail_dir)
-    write_model_detail_pages(ranked_results, model_tests, thumbnails, output_dir)
     model_refs = registry["runs"][run_name]["models"]
     bundles = {item["model_key"]: load_model_bundle(Path(model_refs[item["model_key"]]["model_file"])) for item in ranked_results}
+    detail_heatmaps: dict[str, dict[str, str]] = {}
+    if args.detail_heatmaps != "none":
+        detail_items = [active_result] if args.detail_heatmaps == "active" else ranked_results
+        for item in detail_items:
+            detail_heatmaps[item["model_key"]] = build_detail_heatmaps(
+                item,
+                bundles[item["model_key"]],
+                model_tests[item["model_key"]]["rows"],
+                detail_heatmap_dir / model_page_name(item["model_key"]).removesuffix(".html"),
+                args.grid_size,
+                args.top_heatmap_cells,
+                args.batch_size,
+            )
+    write_model_detail_pages(ranked_results, model_tests, thumbnails, detail_heatmaps, output_dir)
 
     heatmap_feature_cache: dict[tuple[str, str], tuple[np.ndarray, list[tuple[int, int]], np.ndarray]] = {}
     methods: list[dict[str, Any]] = []
@@ -673,6 +795,8 @@ def main() -> None:
         "dataset_summary": experiment["dataset_summary"],
         "best": ranked_results[0],
         "active_test_results": model_tests[active_result["model_key"]],
+        "model_test_results": model_tests,
+        "detail_heatmaps": detail_heatmaps,
         "cleaned_inputs": cleaned_inputs,
         "ranked_results": ranked_results,
         "methods": methods,

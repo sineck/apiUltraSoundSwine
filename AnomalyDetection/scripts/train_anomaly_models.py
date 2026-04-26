@@ -8,7 +8,15 @@ from typing import Any
 import numpy as np
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
@@ -90,10 +98,21 @@ def metrics_for(scores: np.ndarray, threshold: float, y_true: np.ndarray) -> dic
     matrix = confusion_matrix(y_true, y_pred, labels=[1, 0])
     pregnant_total = matrix[0].sum()
     no_pregnant_total = matrix[1].sum()
+    no_pregnant_true = (np.asarray(y_true, dtype=np.int64) == 0).astype(np.int64)
+    auc_no_pregnant = (
+        float(roc_auc_score(no_pregnant_true, np.asarray(scores, dtype=np.float64)))
+        if len(np.unique(no_pregnant_true)) == 2
+        else None
+    )
     return {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+        "auc_no_pregnant": auc_no_pregnant,
         "f1_no_pregnant": float(f1_score(y_true, y_pred, pos_label=0, zero_division=0)),
+        "precision_no_pregnant": float(precision_score(y_true, y_pred, pos_label=0, zero_division=0)),
+        "recall_no_pregnant": float(recall_score(y_true, y_pred, pos_label=0, zero_division=0)),
+        "precision_pregnant": float(precision_score(y_true, y_pred, pos_label=1, zero_division=0)),
+        "recall_pregnant": float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)),
         "pregnant_recall": float(matrix[0, 0] / pregnant_total) if pregnant_total else 0.0,
         "no_pregnant_recall": float(matrix[1, 1] / no_pregnant_total) if no_pregnant_total else 0.0,
         "confusion_matrix_labels": ["pregnant", "no_pregnant"],

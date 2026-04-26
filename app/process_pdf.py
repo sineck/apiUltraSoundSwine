@@ -10,7 +10,6 @@ import pytesseract
 import re
 # import pyodbc
 from dotenv import load_dotenv
-import matplotlib.pyplot as plt 
 import pymysql 
 import uuid # ใช้สำหรับสุ่มชื่อ 
 from pathlib import Path   
@@ -188,7 +187,7 @@ def crop_real_image(pil_img, debug=False, debug_path=None):
                 img_color = np.array(pil_img.convert("RGB"))
                 # วาดกรอบสี่เหลี่ยมแสดง bounding box ที่ crop
                 cv2.rectangle(img_color, (x2, y2), (x2+w2, y2+h2), (255,0,0), 2)
-                plt.imsave(debug_path, img_color)
+                cv2.imwrite(str(debug_path), cv2.cvtColor(img_color, cv2.COLOR_RGB2BGR))
             return cropped
         # crop เฉพาะ bounding box ของ contour ที่ใหญ่ที่สุด
         cropped = pil_img.crop((x, y, x+w, y+h))
@@ -197,7 +196,7 @@ def crop_real_image(pil_img, debug=False, debug_path=None):
             # วาด contour และกรอบสี่เหลี่ยมแสดง bounding box
             cv2.drawContours(img_color, [largest], -1, (0,255,0), 2)
             cv2.rectangle(img_color, (x, y), (x+w, y+h), (255,0,0), 2)
-            plt.imsave(debug_path, img_color)
+            cv2.imwrite(str(debug_path), cv2.cvtColor(img_color, cv2.COLOR_RGB2BGR))
         return cropped
     else:
         # fallback: ถ้าไม่เจอ contour เลย ใช้ threshold ขาวเพื่อหาโซนที่ไม่ใช่ขอบขาว
@@ -210,7 +209,7 @@ def crop_real_image(pil_img, debug=False, debug_path=None):
             img_color = np.array(pil_img.convert("RGB"))
             # วาดกรอบสี่เหลี่ยมแสดง bounding box ที่ crop
             cv2.rectangle(img_color, (x, y), (x+w, y+h), (255,0,0), 2)
-            plt.imsave(debug_path, img_color)
+            cv2.imwrite(str(debug_path), cv2.cvtColor(img_color, cv2.COLOR_RGB2BGR))
         return cropped
 
 """ ฟังชั่นนี้สกัดเฉพาะ pdf to img เท่านั้น  """

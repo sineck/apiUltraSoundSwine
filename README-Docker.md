@@ -192,7 +192,40 @@ PY"
 
 ค่า model active อ่านจาก `AnomalyDetection/artifacts/models/model_registry.json` ภายใต้ project root ปัจจุบันเสมอ. อย่าใช้ absolute path จากเครื่อง train เป็น runtime source of truth. โค้ดรองรับ registry ที่ยังมี Windows path เก่าอยู่ใน `model_file` โดย resolve กลับมาที่ project root ปัจจุบันแทน.
 
-หมายเหตุ: active model ปัจจุบันเป็น `dinov2__logistic_regression_balanced` จึงต้องมี `torch/torchvision` และครั้งแรกใน Docker อาจดาวน์โหลด DINOv2 weights ถ้า cache ยังไม่มี.
+หมายเหตุ: โฟลเดอร์จริงของระบบนี้คือ `AnomalyDetection` ใต้ project root ไม่ใช่ `Anomaly` หรือชื่ออื่น. active model ปัจจุบันเป็น `handcrafted__logistic_regression_balanced` จึงไม่เรียก DINOv2 ใน runtime ปกติ.
+
+### DINOv2 weights
+
+Dockerfile ตั้ง `BAKE_DINOV2_WEIGHTS=true` เป็นค่าเริ่มต้น เพื่อ pre-download DINOv2 ผ่าน `torch.hub` เข้า `TORCH_HOME=/app/.cache/torch` ระหว่าง build. เหตุผลคือถ้าวันหลังเปลี่ยน `model_registry.json` ให้ active model เป็นกลุ่ม `dinov2__...` แล้ว production ถูก block network, container จะยังมี cache สำหรับ DINOv2 อยู่แล้ว.
+
+ถ้าต้องการ image เล็กกว่าและแน่ใจว่าไม่ใช้ `dinov2__...` ให้ build ด้วย:
+
+```powershell
+docker build --build-arg BAKE_DINOV2_WEIGHTS=false -t apiultrasoundswine-api:latest .
+```
+
+ถ้าเปลี่ยน active model เป็น `dinov2__...` ต้องมีอย่างใดอย่างหนึ่ง:
+
+- ใช้ image ที่ build ด้วย `BAKE_DINOV2_WEIGHTS=true`
+- server มี network ให้ `torch.hub` ดาวน์โหลด DINOv2 code/weights ตอนรันครั้งแรก
+- เตรียม torch hub cache ไว้ล่วงหน้าแล้ว mount เข้า container
+
+สำหรับ production ที่ network ถูก block ไม่ควรพึ่ง first-run download ของ DINOv2.
+
+---
+
+## Docker Image Size
+
+Dockerfile ใช้ `requirements-docker.txt` แยกจาก `requirements.txt` เพื่อลด dependency ใน image:
+
+- ติดตั้ง PyTorch แบบ CPU-only จาก `https://download.pytorch.org/whl/cpu`
+- ติดตั้ง `ultralytics` แบบ `--no-deps` เพื่อไม่ดึง `opencv-python` ตัวเต็มและ `polars`
+- ใช้ `opencv-python-headless` ชุดเดียวสำหรับ API runtime
+- ใช้ Python stdlib สำหรับ Docker healthcheck แทน `curl`
+- ไม่ copy `config/.env` เข้า image
+- ค่า default จะ bake DINOv2 weights/cache เข้า image ด้วย `BAKE_DINOV2_WEIGHTS=true`; ถ้าปิดจะลดขนาดลงประมาณ 100-150 MB แต่จะรัน active model กลุ่ม `dinov2__...` แบบ offline ไม่ได้
+
+ขนาด image ที่ตรวจล่าสุดก่อน bake DINOv2: `apiultrasoundswine-api:latest` ประมาณ `1.78GB`. เมื่อ bake DINOv2 แล้วคาดว่าจะเพิ่มประมาณ `100-150 MB` ขึ้นกับ torch hub cache ที่ดาวน์โหลดได้จริง.
 
 ---
 
