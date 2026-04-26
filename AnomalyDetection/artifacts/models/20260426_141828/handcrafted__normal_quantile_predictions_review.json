@@ -1,0 +1,236 @@
+[
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W1104032-20250406_094138.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.100467562675476,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W117354-20250421_093814.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.1920634508132935,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W117461-20250406_093622.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.5965677499771118,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W120306-20250501_153036.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.0313764810562134,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W122193-20250501_153152.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.165263056755066,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W126798-20250501_152731.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.288716197013855,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W1523021-20250505_142227.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.5163719654083252,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W2006101-20250623_100820.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.1722278594970703,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W2216681-20250623_093542.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 2.122837781906128,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W2728092-20250728_091957.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.7017560005187988,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W2732781-20250728_093400.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.815445899963379,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-W2787411-20250728_092924.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.2602225542068481,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-WK3019551-20250824_094933.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 2.0132339000701904,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\validate\\3_NotSure\\PT-WK3296851-20250901_092855.jpg",
+    "split": "validate",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.0963973999023438,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W1029322-20250330_101202.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.1918143033981323,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W110980-20250406_094656.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 0.9847837090492249,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W121351-20250413_095907.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 0.9870486259460449,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W182519-20250602_152842.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.9174003601074219,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W192207-20250602_152229.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 2.153270959854126,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W221282-20250710_143937.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.3204137086868286,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W250045-20250716_100917.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.3167372941970825,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W2619765-20250722_095423.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.0025063753128052,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-W2633761-20250722_100631.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.853943943977356,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-WK2620081-20250804_100135.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 0.8261149525642395,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-WK2631712-20250804_095517.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 1.5344586372375488,
+    "prediction": "pregnant",
+    "threshold": 1.6950905323028564
+  },
+  {
+    "path": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset\\test\\3_NotSure\\PT-WK3229678-20250901_093625.jpg",
+    "split": "test",
+    "actual_label": "3_NotSure",
+    "actual_target": null,
+    "score_no_pregnant": 2.8296360969543457,
+    "prediction": "no_pregnant",
+    "threshold": 1.6950905323028564
+  }
+]

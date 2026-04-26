@@ -1,0 +1,53 @@
+﻿{
+    "schema_version":  1,
+    "active_model":  "20260426_141828/handcrafted__logistic_regression_balanced",
+    "updated_at":  "2026-04-26T07:20:06.651920+00:00",
+    "runs":  {
+                 "20260426_141828":  {
+                                         "experiment_results":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\experiment_results.json",
+                                         "active_model":  "handcrafted__logistic_regression_balanced",
+                                         "models":  {
+                                                        "handcrafted__normal_quantile":  {
+                                                                                             "model_key":  "handcrafted__normal_quantile",
+                                                                                             "model_file":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__normal_quantile.joblib",
+                                                                                             "weights_json":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__normal_quantile_weights.json",
+                                                                                             "feature_set":  "handcrafted",
+                                                                                             "model_name":  "normal_quantile",
+                                                                                             "threshold":  1.6950905323028564,
+                                                                                             "validate_balanced_accuracy":  0.8635057471264368,
+                                                                                             "test_balanced_accuracy":  0.9941860465116279
+                                                                                         },
+                                                        "handcrafted__logistic_regression_balanced":  {
+                                                                                                          "model_key":  "handcrafted__logistic_regression_balanced",
+                                                                                                          "model_file":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__logistic_regression_balanced.joblib",
+                                                                                                          "weights_json":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__logistic_regression_balanced_weights.json",
+                                                                                                          "feature_set":  "handcrafted",
+                                                                                                          "model_name":  "logistic_regression_balanced",
+                                                                                                          "threshold":  0.8944194260517169,
+                                                                                                          "validate_balanced_accuracy":  0.875,
+                                                                                                          "test_balanced_accuracy":  1.0
+                                                                                                      },
+                                                        "resnet18__logistic_regression_balanced":  {
+                                                                                                       "model_key":  "resnet18__logistic_regression_balanced",
+                                                                                                       "model_file":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\resnet18__logistic_regression_balanced.joblib",
+                                                                                                       "weights_json":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\resnet18__logistic_regression_balanced_weights.json",
+                                                                                                       "feature_set":  "resnet18",
+                                                                                                       "model_name":  "logistic_regression_balanced",
+                                                                                                       "threshold":  0.3229416260542485,
+                                                                                                       "validate_balanced_accuracy":  0.8692528735632183,
+                                                                                                       "test_balanced_accuracy":  0.9941860465116279
+                                                                                                   },
+                                                        "dinov2__random_forest_balanced":  {
+                                                                                               "model_key":  "dinov2__random_forest_balanced",
+                                                                                               "model_file":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\dinov2__random_forest_balanced.joblib",
+                                                                                               "weights_json":  "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\dinov2__random_forest_balanced_weights.json",
+                                                                                               "feature_set":  "dinov2",
+                                                                                               "model_name":  "random_forest_balanced",
+                                                                                               "threshold":  0.018750000000000003,
+                                                                                               "validate_balanced_accuracy":  0.867816091954023,
+                                                                                               "test_balanced_accuracy":  0.8837209302325582
+                                                                                           }
+                                                    }
+                                     }
+             }
+}

@@ -1,0 +1,405 @@
+{
+  "schema_version": 1,
+  "run_name": "20260426_141828",
+  "created_at": "2026-04-26T07:20:06.650920+00:00",
+  "asset_dir": "D:\\apiUltraSoundSwine\\AnomalyDetection\\asset",
+  "dataset_summary": {
+    "train": {
+      "1_Pregnant": 397,
+      "2_NoPregnant": 11
+    },
+    "validate": {
+      "1_Pregnant": 87,
+      "2_NoPregnant": 4,
+      "3_NotSure": 14
+    },
+    "test": {
+      "1_Pregnant": 86,
+      "2_NoPregnant": 5,
+      "3_NotSure": 12
+    }
+  },
+  "requested_feature_sets": [
+    "handcrafted",
+    "resnet18",
+    "dinov2"
+  ],
+  "requested_model_keys": [
+    "dinov2__random_forest_balanced",
+    "handcrafted__logistic_regression_balanced",
+    "handcrafted__normal_quantile",
+    "resnet18__logistic_regression_balanced"
+  ],
+  "skipped_feature_sets": [],
+  "active_model": "handcrafted__logistic_regression_balanced",
+  "results": [
+    {
+      "model_key": "handcrafted__normal_quantile",
+      "feature_set": "handcrafted",
+      "model_name": "normal_quantile",
+      "threshold": 1.6950905323028564,
+      "threshold_selection": {
+        "objective": 0.8710057471264367,
+        "balanced_accuracy": 0.8635057471264368,
+        "no_pregnant_recall": 0.75
+      },
+      "train": {
+        "accuracy": 0.9754901960784313,
+        "balanced_accuracy": 0.8106251431188458,
+        "auc_no_pregnant": 0.9825967483398214,
+        "f1_no_pregnant": 0.5833333333333334,
+        "precision_no_pregnant": 0.5384615384615384,
+        "recall_no_pregnant": 0.6363636363636364,
+        "precision_pregnant": 0.9898734177215189,
+        "recall_pregnant": 0.9848866498740554,
+        "pregnant_recall": 0.9848866498740554,
+        "no_pregnant_recall": 0.6363636363636364,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            391,
+            6
+          ],
+          [
+            4,
+            7
+          ]
+        ]
+      },
+      "validate": {
+        "accuracy": 0.967032967032967,
+        "balanced_accuracy": 0.8635057471264368,
+        "auc_no_pregnant": 0.8994252873563218,
+        "f1_no_pregnant": 0.6666666666666666,
+        "precision_no_pregnant": 0.6,
+        "recall_no_pregnant": 0.75,
+        "precision_pregnant": 0.9883720930232558,
+        "recall_pregnant": 0.9770114942528736,
+        "pregnant_recall": 0.9770114942528736,
+        "no_pregnant_recall": 0.75,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            85,
+            2
+          ],
+          [
+            1,
+            3
+          ]
+        ]
+      },
+      "test": {
+        "accuracy": 0.989010989010989,
+        "balanced_accuracy": 0.9941860465116279,
+        "auc_no_pregnant": 0.9930232558139535,
+        "f1_no_pregnant": 0.9090909090909091,
+        "precision_no_pregnant": 0.8333333333333334,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 0.9883720930232558,
+        "pregnant_recall": 0.9883720930232558,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            85,
+            1
+          ],
+          [
+            0,
+            5
+          ]
+        ]
+      },
+      "model_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__normal_quantile.joblib",
+      "weights_json": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__normal_quantile_weights.json",
+      "review_prediction_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__normal_quantile_predictions_review.json"
+    },
+    {
+      "model_key": "handcrafted__logistic_regression_balanced",
+      "feature_set": "handcrafted",
+      "model_name": "logistic_regression_balanced",
+      "threshold": 0.8944194260517169,
+      "threshold_selection": {
+        "objective": 0.8825,
+        "balanced_accuracy": 0.875,
+        "no_pregnant_recall": 0.75
+      },
+      "train": {
+        "accuracy": 0.9975490196078431,
+        "balanced_accuracy": 0.9987405541561714,
+        "auc_no_pregnant": 0.9997710098465766,
+        "f1_no_pregnant": 0.9565217391304348,
+        "precision_no_pregnant": 0.9166666666666666,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 0.9974811083123426,
+        "pregnant_recall": 0.9974811083123426,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            396,
+            1
+          ],
+          [
+            0,
+            11
+          ]
+        ]
+      },
+      "validate": {
+        "accuracy": 0.989010989010989,
+        "balanced_accuracy": 0.875,
+        "auc_no_pregnant": 0.8793103448275861,
+        "f1_no_pregnant": 0.8571428571428571,
+        "precision_no_pregnant": 1.0,
+        "recall_no_pregnant": 0.75,
+        "precision_pregnant": 0.9886363636363636,
+        "recall_pregnant": 1.0,
+        "pregnant_recall": 1.0,
+        "no_pregnant_recall": 0.75,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            87,
+            0
+          ],
+          [
+            1,
+            3
+          ]
+        ]
+      },
+      "test": {
+        "accuracy": 1.0,
+        "balanced_accuracy": 1.0,
+        "auc_no_pregnant": 1.0,
+        "f1_no_pregnant": 1.0,
+        "precision_no_pregnant": 1.0,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 1.0,
+        "pregnant_recall": 1.0,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            86,
+            0
+          ],
+          [
+            0,
+            5
+          ]
+        ]
+      },
+      "model_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__logistic_regression_balanced.joblib",
+      "weights_json": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__logistic_regression_balanced_weights.json",
+      "review_prediction_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\handcrafted__logistic_regression_balanced_predictions_review.json"
+    },
+    {
+      "model_key": "resnet18__logistic_regression_balanced",
+      "feature_set": "resnet18",
+      "model_name": "logistic_regression_balanced",
+      "threshold": 0.3229416260542485,
+      "threshold_selection": {
+        "objective": 0.8767528735632183,
+        "balanced_accuracy": 0.8692528735632183,
+        "no_pregnant_recall": 0.75
+      },
+      "train": {
+        "accuracy": 1.0,
+        "balanced_accuracy": 1.0,
+        "auc_no_pregnant": 1.0,
+        "f1_no_pregnant": 1.0,
+        "precision_no_pregnant": 1.0,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 1.0,
+        "pregnant_recall": 1.0,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            397,
+            0
+          ],
+          [
+            0,
+            11
+          ]
+        ]
+      },
+      "validate": {
+        "accuracy": 0.978021978021978,
+        "balanced_accuracy": 0.8692528735632183,
+        "auc_no_pregnant": 0.9224137931034482,
+        "f1_no_pregnant": 0.75,
+        "precision_no_pregnant": 0.75,
+        "recall_no_pregnant": 0.75,
+        "precision_pregnant": 0.9885057471264368,
+        "recall_pregnant": 0.9885057471264368,
+        "pregnant_recall": 0.9885057471264368,
+        "no_pregnant_recall": 0.75,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            86,
+            1
+          ],
+          [
+            1,
+            3
+          ]
+        ]
+      },
+      "test": {
+        "accuracy": 0.989010989010989,
+        "balanced_accuracy": 0.9941860465116279,
+        "auc_no_pregnant": 1.0,
+        "f1_no_pregnant": 0.9090909090909091,
+        "precision_no_pregnant": 0.8333333333333334,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 0.9883720930232558,
+        "pregnant_recall": 0.9883720930232558,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            85,
+            1
+          ],
+          [
+            0,
+            5
+          ]
+        ]
+      },
+      "model_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\resnet18__logistic_regression_balanced.joblib",
+      "weights_json": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\resnet18__logistic_regression_balanced_weights.json",
+      "review_prediction_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\resnet18__logistic_regression_balanced_predictions_review.json"
+    },
+    {
+      "model_key": "dinov2__random_forest_balanced",
+      "feature_set": "dinov2",
+      "model_name": "random_forest_balanced",
+      "threshold": 0.018750000000000003,
+      "threshold_selection": {
+        "objective": 0.877816091954023,
+        "balanced_accuracy": 0.867816091954023,
+        "no_pregnant_recall": 1.0
+      },
+      "train": {
+        "accuracy": 0.9534313725490197,
+        "balanced_accuracy": 0.9760705289672544,
+        "auc_no_pregnant": 1.0,
+        "f1_no_pregnant": 0.5365853658536586,
+        "precision_no_pregnant": 0.36666666666666664,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 0.9521410579345088,
+        "pregnant_recall": 0.9521410579345088,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            378,
+            19
+          ],
+          [
+            0,
+            11
+          ]
+        ]
+      },
+      "validate": {
+        "accuracy": 0.7472527472527473,
+        "balanced_accuracy": 0.867816091954023,
+        "auc_no_pregnant": 0.9295977011494253,
+        "f1_no_pregnant": 0.25806451612903225,
+        "precision_no_pregnant": 0.14814814814814814,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 0.735632183908046,
+        "pregnant_recall": 0.735632183908046,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            64,
+            23
+          ],
+          [
+            0,
+            4
+          ]
+        ]
+      },
+      "test": {
+        "accuracy": 0.7802197802197802,
+        "balanced_accuracy": 0.8837209302325582,
+        "auc_no_pregnant": 0.9953488372093023,
+        "f1_no_pregnant": 0.3333333333333333,
+        "precision_no_pregnant": 0.2,
+        "recall_no_pregnant": 1.0,
+        "precision_pregnant": 1.0,
+        "recall_pregnant": 0.7674418604651163,
+        "pregnant_recall": 0.7674418604651163,
+        "no_pregnant_recall": 1.0,
+        "confusion_matrix_labels": [
+          "pregnant",
+          "no_pregnant"
+        ],
+        "confusion_matrix": [
+          [
+            66,
+            20
+          ],
+          [
+            0,
+            5
+          ]
+        ]
+      },
+      "model_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\dinov2__random_forest_balanced.joblib",
+      "weights_json": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\dinov2__random_forest_balanced_weights.json",
+      "review_prediction_file": "D:\\apiUltraSoundSwine\\AnomalyDetection\\artifacts\\models\\20260426_141828\\dinov2__random_forest_balanced_predictions_review.json"
+    }
+  ]
+}

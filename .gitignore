@@ -18,8 +18,6 @@ config/.env
 !config/.env.example
 
 AnomalyDetection/asset/
-AnomalyDetection/artifacts/
 AnomalyDetection/outputs/
 
 backup/ 
-model/
