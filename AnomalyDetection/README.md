@@ -6,6 +6,8 @@ This folder contains a standalone training workflow for pig ultrasound pregnancy
 
 เอกสารนี้อธิบายเฉพาะฝั่ง **train / model artifact / anomaly runtime backend** ของโปรเจคนี้
 
+ถ้าต้องการภาพรวมทั้งระบบ เช่น V1/V2 route, config หลัก, และวิธีรันระบบ ให้กลับไปอ่าน [README.md](..\README.md) ที่ root ก่อน แล้วค่อยกลับมาอ่านไฟล์นี้เมื่อจะทำงานฝั่ง anomaly โดยตรง
+
 - **V1 runtime** ของระบบหลักอยู่ที่ `POST /upload_pdf/` และไม่ได้เรียก anomaly backend
 - **V2 runtime** ที่เรียก anomaly backend ได้จริงคือ:
   - `POST /v2/upload_pdf/`
@@ -16,7 +18,7 @@ This folder contains a standalone training workflow for pig ultrasound pregnancy
 PREGNANCY_DETECT_MODEL_V2=anomaly
 ```
 
-ถ้าต้องการภาพรวมการรัน Docker, วิธี build image, หรือวิธี deploy ให้ดู `README-Docker.md` ที่ root ของโปรเจค
+ถ้าต้องการภาพรวมการรัน Docker, วิธี build image, หรือวิธี deploy ให้ดู [README-Docker.md](..\README-Docker.md)
 
 ## คำสั่งใช้บ่อย
 
@@ -62,6 +64,8 @@ curl http://127.0.0.1:3014/anomaly/retrain/status/
 
 ## Dataset Layout
 
+โฟลเดอร์นี้พูดถึงเฉพาะ dataset สำหรับ train/validate/test ของ anomaly workflow ไม่ได้อธิบายไฟล์ output ของ V1/V2 runtime
+
 The trainer reads images from:
 
 - `asset/train/1_Pregnant`
@@ -78,6 +82,8 @@ The trainer reads images from:
 Before feature extraction, the pipeline applies a `clinical_clean` preprocessing step that keeps the main ultrasound sector and masks common text/measurement overlay zones such as ID, Depth, Gain, date, PT/BF, Freeze, and measurement labels. This reduces the chance that the model learns from screen text instead of ultrasound anatomy.
 
 ## Train All Models
+
+ส่วนนี้คือคำสั่ง train ฝั่ง anomaly โดยตรง ไม่ใช่คำสั่ง run API
 
 From the repository root:
 
@@ -114,6 +120,8 @@ The full sweep includes:
 - PaDiM-style diagonal Gaussian patch anomaly score
 
 ## Outputs
+
+หลัง train เสร็จ ไฟล์สำคัญจะถูกเขียนไว้ใน `AnomalyDetection/artifacts/models/<run_name>/`
 
 Each run writes to `AnomalyDetection/artifacts/models/<run_name>/`:
 
@@ -153,6 +161,8 @@ The report generator also writes cleaned input images next to the heatmaps, so t
 
 ## Retrain From API
 
+ส่วนนี้ใช้เมื่อ API รันอยู่แล้ว และต้องการสั่ง retrain ผ่าน route โดยไม่ต้องเรียก script ตรง
+
 Start a new anomaly training job in the background:
 
 ```powershell
@@ -179,6 +189,8 @@ curl http://127.0.0.1:3014/anomaly/retrain/status/
 
 ## Predict One Image
 
+ใช้คำสั่งนี้เมื่อต้องการเช็ก active model แบบเร็ว ๆ จากไฟล์ภาพเดียว โดยไม่ต้องยิงผ่าน API
+
 ```powershell
 .\.venv\Scripts\python.exe AnomalyDetection\scripts\predict_image.py "path\to\image.jpg"
 ```
@@ -196,6 +208,8 @@ CLI นี้ใช้ logic resolve active model แบบเดียวกั
 - ถ้า path เดิมไม่มีอยู่แล้ว จะ fallback ไปหาไฟล์ `.joblib` ข้าง registry run folder ปัจจุบัน
 
 ## Runtime Contract Notes
+
+ส่วนนี้เอาไว้ผูกให้เห็นว่า artifact/training ฝั่ง anomaly ไปเชื่อมกับ route V2 ของระบบหลักอย่างไร
 
 เมื่อ V2 route ใช้ anomaly backend:
 
