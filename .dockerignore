@@ -1,0 +1,27 @@
+# Ignore sensitive files
+**/.env
+config/.env
+
+# Ignore Python cache
+**/__pycache__
+.pytest_cache/
+.venv/
+.vnev/
+
+# Ignore Git and IDE-specific files
+.git
+.gitignore
+.vscode
+.cursor 
+
+# Ignore asset files in app
+app/asset/  
+backup/
+
+# Ignore local Docker image exports and archives
+*.tar
+
+# Ignore runtime log contents; Docker creates /app/logs at build time.
+logs/*.log
+logs/*.log.*
+

@@ -1,0 +1,8 @@
+
+
+Function                          ||	         อยู่ที่ไหน	          ||        หน้าที่
+-analyze_ultrasound_core()           	-process_detection.py	       -วิเคราะห์ภาพ Gemini AI เท่านั้น
+-save_annotated_image()            	    -process_detection.py	       -Save ภาพลง disk
+-format_result()	                    -process_detection.py	       -แปลงผลเป็น JSON
+-insert_detection_to_db()	            -process_detection.py	       -Logic SQL Insert
+-เรียกใช้ทั้งหมด	                        -main.py	                   -จัดการ Flow ทั้งหมด

@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+python-multipart
+opencv-python-headless
+ultralytics 
+pillow   
+numpy
+python-dotenv
+pdf2image
+pytesseract
+pymysql 
+pymupdf 
+google-genai
+scikit-learn
+joblib
+torch
+torchvision
