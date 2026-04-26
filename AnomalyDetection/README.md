@@ -50,6 +50,15 @@ PREGNANCY_DETECT_MODEL_V2=anomaly
 
 ### เรียก retrain ผ่าน API
 
+เปิด Swagger UI ก่อน:
+
+- `http://127.0.0.1:3014/docs`
+- route ที่ใช้:
+  - `POST /anomaly/retrain/`
+  - `GET /anomaly/retrain/status/`
+
+ถ้าต้องการลองกดจากหน้าเว็บ ให้เริ่มจาก `/docs` ก่อน แล้วค่อยใช้ตัวอย่าง `curl` ด้านล่างเมื่อจะเรียกจาก terminal หรือ script
+
 ```powershell
 curl -X POST http://127.0.0.1:3014/anomaly/retrain/ `
   -H "Content-Type: application/json" `
