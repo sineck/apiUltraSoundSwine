@@ -7,6 +7,7 @@ WORKDIR /app
 # Set build-time argument for API port
 ARG MYAPI_PORT=3014
 ARG BAKE_DINOV2_WEIGHTS=true
+ARG BAKE_RESNET18_WEIGHTS=true
 # Set environment variable for the port
 ENV MYAPI_PORT=$MYAPI_PORT
 ENV TORCH_HOME=/app/.cache/torch
@@ -25,7 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN ln -sf /usr/share/zoneinfo/Asia/Bangkok /etc/localtime && \
     echo "Asia/Bangkok" > /etc/timezone && \
     dpkg-reconfigure -f noninteractive tzdata
-    
+
+RUN groupadd --system appuser && \
+    useradd --system --gid appuser --home-dir /app --shell /usr/sbin/nologin appuser
 
 # Copy requirements first for better caching
 COPY requirements.txt .
@@ -36,25 +39,26 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
     pip install --no-cache-dir -r requirements-docker.txt && \
     pip install --no-cache-dir --no-deps ultralytics
 
-# Preload DINOv2 only when requested. The project folder is AnomalyDetection;
-# this cache is for torch.hub so a future dinov2 active model can run offline.
+# Preload optional deep feature weights used by AnomalyDetection artifacts.
+# Without these caches, future dinov2/resnet18 active models need network on first use.
 RUN mkdir -p "$TORCH_HOME" && \
     if [ "$BAKE_DINOV2_WEIGHTS" = "true" ]; then \
         python -c "import torch; torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', trust_repo=True).eval()"; \
+    fi && \
+    if [ "$BAKE_RESNET18_WEIGHTS" = "true" ]; then \
+        python -c "from torchvision.models import ResNet18_Weights, resnet18; resnet18(weights=ResNet18_Weights.DEFAULT).eval()"; \
     fi
 
 RUN mkdir -p app/uploads app/asset app/detections app/static config logs "$TORCH_HOME"
 
 # Copy application code
-COPY app/ ./app
-COPY AnomalyDetection/scripts/ ./AnomalyDetection/scripts/
-COPY AnomalyDetection/artifacts/models/ ./AnomalyDetection/artifacts/models/
-COPY config/.env.example ./config/.env.example
-COPY model/ ./model/
+COPY --chown=appuser:appuser app/ ./app
+COPY --chown=appuser:appuser AnomalyDetection/scripts/ ./AnomalyDetection/scripts/
+COPY --chown=appuser:appuser AnomalyDetection/artifacts/models/ ./AnomalyDetection/artifacts/models/
+COPY --chown=appuser:appuser config/.env.example ./config/.env.example
+COPY --chown=appuser:appuser model/ ./model/
 
-RUN groupadd --system appuser && \
-    useradd --system --gid appuser --home-dir /app --shell /usr/sbin/nologin appuser && \
-    chown -R appuser:appuser /app
+RUN install -d -o appuser -g appuser app/uploads app/asset app/detections app/static logs
 
 
 # Set environment variables

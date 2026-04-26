@@ -30,6 +30,14 @@ from anomaly_lib import (
 )
 
 
+COMPACT_MODEL_KEYS = [
+    "handcrafted__logistic_regression_balanced",
+    "resnet18__logistic_regression_balanced",
+    "handcrafted__normal_quantile",
+    "dinov2__random_forest_balanced",
+]
+
+
 def parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Generate an HTML model comparison report with heatmaps.")
@@ -38,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grid-size", type=int, default=8)
     parser.add_argument("--top-heatmap-cells", type=int, default=8)
     parser.add_argument("--detail-heatmaps", choices=["none", "active", "all"], default="active")
+    parser.add_argument(
+        "--model-keys",
+        default=",".join(COMPACT_MODEL_KEYS),
+        help="Comma-separated model keys to include, or 'all'. Default is the compact 4-model set.",
+    )
     parser.add_argument("--batch-size", type=int, default=24)
     return parser.parse_args()
 
@@ -329,6 +342,22 @@ def method_rank(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ),
         reverse=True,
     )
+
+
+def selected_model_keys(value: str) -> set[str] | None:
+    if value.strip().lower() == "all":
+        return None
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
+def filter_results(results: list[dict[str, Any]], model_keys: set[str] | None) -> list[dict[str, Any]]:
+    if model_keys is None:
+        return results
+    filtered = [item for item in results if item["model_key"] in model_keys]
+    missing = sorted(model_keys.difference({item["model_key"] for item in filtered}))
+    if missing:
+        raise SystemExit(f"Missing selected model keys in experiment results: {', '.join(missing)}")
+    return filtered
 
 
 def expected_label(actual_target: int) -> str:
@@ -720,7 +749,8 @@ def main() -> None:
     heatmap_dir.mkdir(parents=True, exist_ok=True)
     input_dir.mkdir(parents=True, exist_ok=True)
 
-    ranked_results = method_rank(experiment["results"])
+    model_keys = selected_model_keys(args.model_keys)
+    ranked_results = method_rank(filter_results(experiment["results"], model_keys))
     active_result = next(item for item in ranked_results if item["model_key"] == active_model)
     model_tests = {item["model_key"]: build_model_test_results(item) for item in ranked_results}
     thumbnails = build_test_thumbnails(model_tests[active_model]["rows"], thumbnail_dir)

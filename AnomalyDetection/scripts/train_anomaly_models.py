@@ -37,12 +37,25 @@ from anomaly_lib import (
 )
 
 
+COMPACT_MODEL_KEYS = [
+    "handcrafted__logistic_regression_balanced",
+    "resnet18__logistic_regression_balanced",
+    "handcrafted__normal_quantile",
+    "dinov2__random_forest_balanced",
+]
+
+
 def parse_args() -> argparse.Namespace:
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Train pig ultrasound anomaly screening models.")
     parser.add_argument("--asset-dir", type=Path, default=root / "asset")
     parser.add_argument("--output-dir", type=Path, default=root / "artifacts" / "models")
     parser.add_argument("--feature-sets", default="handcrafted,resnet18,dinov2")
+    parser.add_argument(
+        "--model-keys",
+        default=",".join(COMPACT_MODEL_KEYS),
+        help="Comma-separated model keys to train, or 'all'. Default is the compact 4-model set.",
+    )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--run-name", default=None)
@@ -229,6 +242,12 @@ def candidate_models(random_state: int) -> list[tuple[str, Any]]:
     ]
 
 
+def selected_model_keys(value: str) -> set[str] | None:
+    if value.strip().lower() == "all":
+        return None
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
 def fit_candidate(name: str, estimator: Any, x_train: np.ndarray, y_train: np.ndarray) -> dict[str, Any]:
     if name == "mahalanobis":
         return fit_mahalanobis(x_train, y_train)
@@ -286,6 +305,7 @@ def run_feature_set(
     output_dir: Path,
     batch_size: int,
     random_state: int,
+    model_keys: set[str] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     print(f"[FEATURE] Extracting {feature_set}")
     features = get_feature_matrix(rows, feature_set, batch_size=batch_size)
@@ -309,6 +329,9 @@ def run_feature_set(
     results: list[dict[str, Any]] = []
     model_refs: list[dict[str, Any]] = []
     for model_name, estimator in candidate_models(random_state):
+        model_key = f"{feature_set}__{model_name}"
+        if model_keys is not None and model_key not in model_keys:
+            continue
         print(f"[MODEL] Training {feature_set}/{model_name}")
         bundle = fit_candidate(model_name, estimator, x_train, y_train)
         bundle.update(
@@ -329,7 +352,6 @@ def run_feature_set(
         train_scores = score_bundle(bundle, x_train)
         test_scores = score_bundle(bundle, x_test)
 
-        model_key = f"{feature_set}__{model_name}"
         model_path = output_dir / f"{model_key}.joblib"
         weights_path = output_dir / f"{model_key}_weights.json"
         save_model_bundle(model_path, bundle)
@@ -381,6 +403,7 @@ def run_patch_models(
     rows: list[ImageRow],
     output_dir: Path,
     random_state: int,
+    model_keys: set[str] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     print("[FEATURE] Extracting patch_handcrafted")
     patch_features = extract_patch_handcrafted(rows)
@@ -409,6 +432,9 @@ def run_patch_models(
     results: list[dict[str, Any]] = []
     model_refs: list[dict[str, Any]] = []
     for model_name, bundle in candidates:
+        model_key = f"patch_handcrafted__{model_name}"
+        if model_keys is not None and model_key not in model_keys:
+            continue
         print(f"[MODEL] Training patch_handcrafted/{model_name}")
         bundle.update(
             {
@@ -426,7 +452,6 @@ def run_patch_models(
 
         train_scores = score_patch_bundle(bundle, patch_train)
         test_scores = score_patch_bundle(bundle, patch_test)
-        model_key = f"patch_handcrafted__{model_name}"
         model_path = output_dir / f"{model_key}.joblib"
         weights_path = output_dir / f"{model_key}_weights.json"
         save_model_bundle(model_path, bundle)
@@ -497,24 +522,26 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     requested_feature_sets = [item.strip() for item in args.feature_sets.split(",") if item.strip()]
+    model_keys = selected_model_keys(args.model_keys)
     all_results: list[dict[str, Any]] = []
     model_refs: list[dict[str, Any]] = []
     skipped_features: list[dict[str, str]] = []
     for feature_set in requested_feature_sets:
         try:
-            results, refs = run_feature_set(feature_set, rows, run_dir, args.batch_size, args.random_state)
+            results, refs = run_feature_set(feature_set, rows, run_dir, args.batch_size, args.random_state, model_keys)
             all_results.extend(results)
             model_refs.extend(refs)
         except Exception as exc:
             skipped_features.append({"feature_set": feature_set, "reason": str(exc)})
             print(f"[WARN] Skipped feature set {feature_set}: {exc}")
-    try:
-        results, refs = run_patch_models(rows, run_dir, args.random_state)
-        all_results.extend(results)
-        model_refs.extend(refs)
-    except Exception as exc:
-        skipped_features.append({"feature_set": "patch_handcrafted", "reason": str(exc)})
-        print(f"[WARN] Skipped feature set patch_handcrafted: {exc}")
+    if model_keys is None or any(item.startswith("patch_handcrafted__") for item in model_keys):
+        try:
+            results, refs = run_patch_models(rows, run_dir, args.random_state, model_keys)
+            all_results.extend(results)
+            model_refs.extend(refs)
+        except Exception as exc:
+            skipped_features.append({"feature_set": "patch_handcrafted", "reason": str(exc)})
+            print(f"[WARN] Skipped feature set patch_handcrafted: {exc}")
 
     if not all_results:
         raise SystemExit("No models were trained successfully.")
@@ -527,6 +554,7 @@ def main() -> None:
         "asset_dir": str(args.asset_dir),
         "dataset_summary": summarize_dataset(rows),
         "requested_feature_sets": requested_feature_sets,
+        "requested_model_keys": sorted(model_keys) if model_keys is not None else "all",
         "skipped_feature_sets": skipped_features,
         "active_model": active["model_key"],
         "results": all_results,

@@ -8,6 +8,19 @@ def test_correct_ocr_text_and_numbers_preserves_expected_digit_shape():
     assert process_pdf.correct_ocr_text_and_numbers("OIlbse") == "011688"
 
 
+def test_ensure_yolo_model_ready_raises_clear_error(monkeypatch):
+    monkeypatch.setattr(process_pdf, "model", None)
+    monkeypatch.setattr(process_pdf, "MODEL_LOAD_ERROR", "missing file")
+
+    try:
+        process_pdf.ensure_yolo_model_ready()
+    except process_pdf.ModelUnavailableError as exc:
+        assert "YOLO model is not available" in str(exc)
+        assert "missing file" in str(exc)
+    else:
+        raise AssertionError("ModelUnavailableError was not raised")
+
+
 def test_extract_info_from_image_parses_ocr_text(monkeypatch):
     image = np.zeros((20, 20, 3), dtype=np.uint8)
     ocr_text = "\n".join(
@@ -161,3 +174,50 @@ def test_render_pdf_pages_falls_back_to_pymupdf(monkeypatch):
     assert len(pages) == 1
     assert isinstance(pages[0], Image.Image)
     assert pages[0].size == (2, 1)
+
+
+def test_convert_pdf_to_png_uses_idunknown_when_ocr_id_is_blank(monkeypatch):
+    calls = []
+    page = Image.new("RGB", (4, 4), color="black")
+
+    def fake_build_image_filename(kind, page_number=None, extension=".png"):
+        return f"pdf_page_{page_number:03d}.png"
+
+    def fake_insert(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setenv("INSERT_ULTRASOUND_TO_DB", "true")
+    monkeypatch.setattr(process_pdf, "render_pdf_pages", lambda path: [page, page])
+    monkeypatch.setattr(process_pdf, "crop_real_image", lambda image: image)
+    monkeypatch.setattr(process_pdf, "build_image_filename", fake_build_image_filename)
+    monkeypatch.setattr(process_pdf.cv2, "imwrite", lambda path, image: True)
+    monkeypatch.setattr(process_pdf, "preprocess_yolo", lambda path: ("pregnant", 0.91))
+    monkeypatch.setattr(process_pdf, "extract_info_from_image", lambda path: process_pdf.default_ocr_info())
+    monkeypatch.setattr(process_pdf, "insert_ultrasound_to_db", fake_insert)
+
+    result = process_pdf.convert_pdf_to_png("scan.pdf")
+
+    assert result is True
+    assert [call["id_val"] for call in calls] == ["IDUnknown", "IDUnknown"]
+
+
+def test_convert_pdf_to_png_skips_db_insert_when_disabled(monkeypatch):
+    page = Image.new("RGB", (4, 4), color="black")
+    called = {"insert": 0}
+
+    def fake_insert(**kwargs):
+        called["insert"] += 1
+
+    monkeypatch.setenv("INSERT_ULTRASOUND_TO_DB", "false")
+    monkeypatch.setattr(process_pdf, "render_pdf_pages", lambda path: [page])
+    monkeypatch.setattr(process_pdf, "crop_real_image", lambda image: image)
+    monkeypatch.setattr(process_pdf, "build_image_filename", lambda kind, page_number=None, extension=".png": "pdf_page_001.png")
+    monkeypatch.setattr(process_pdf.cv2, "imwrite", lambda path, image: True)
+    monkeypatch.setattr(process_pdf, "preprocess_yolo", lambda path: ("1_Pregnant", 0.91))
+    monkeypatch.setattr(process_pdf, "extract_info_from_image", lambda path: process_pdf.default_ocr_info())
+    monkeypatch.setattr(process_pdf, "insert_ultrasound_to_db", fake_insert)
+
+    result = process_pdf.convert_pdf_to_png("scan.pdf")
+
+    assert result is True
+    assert called["insert"] == 0

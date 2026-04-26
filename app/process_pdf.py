@@ -1,6 +1,5 @@
 import fitz  # PyMuPDF สำหรับสกัดภาพจาก ไฟล์ PDF 
 from pdf2image import convert_from_path
-import io
 from PIL import Image
 import os
 from datetime import datetime
@@ -11,7 +10,6 @@ import re
 # import pyodbc
 from dotenv import load_dotenv
 import pymysql 
-import uuid # ใช้สำหรับสุ่มชื่อ 
 from pathlib import Path   
 from ultralytics import YOLO 
 import torch 
@@ -50,6 +48,10 @@ model_name = os.getenv("ModelName","best_finetune_YOLO26-cls_Ver2_20260424.pt")
 show_yolo_results = os.getenv("SHOW_YOLO_RESULTS", "false").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+class ModelUnavailableError(RuntimeError):
+    """Raised when the PDF classifier model cannot be loaded."""
+
+
 def should_insert_ultrasound_to_db() -> bool:
     """Read the DB-write switch at call time so .env changes apply without code edits."""
     value = os.getenv("INSERT_ULTRASOUND_TO_DB", "true").strip().lower()
@@ -64,6 +66,8 @@ def default_ocr_info():
 # Load the classifier once and reuse it for every converted PDF page.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Use Device : {device}")
+model = None
+MODEL_LOAD_ERROR: str | None = None
 
 try:
     # 2. โหลดโมเดล
@@ -75,7 +79,18 @@ try:
     print("Load Model Successfully!")
 
 except Exception as e:
-    print(f"load model failed: {e}")
+    MODEL_LOAD_ERROR = str(e)
+    print(f"load model failed: {MODEL_LOAD_ERROR}")
+
+
+def ensure_yolo_model_ready():
+    """ยืนยันว่า YOLO model โหลดสำเร็จแล้วก่อนเข้า infer PDF/image flow."""
+    if model is None:
+        raise ModelUnavailableError(
+            f"YOLO model is not available: {pathInitial / 'model' / model_name}. "
+            f"load_error={MODEL_LOAD_ERROR or 'unknown'}"
+        )
+    return model
 
 
 create_static = pathInitial/"app"/"static" 
@@ -83,15 +98,17 @@ create_static.mkdir(parents=True,exist_ok=True)
 
 
 def preprocess_yolo(path_img ,target_size=640):
-    """ NOTE 
+    """NOTE 
     ** ทำ Pre-Process ลด Noise , clear ภาพให้เนียน  
     เทคนิคที่ใช้	    สถานะ	                    ผลกระทบต่อความเป็นจริง
     -Grayscale	 ✅ ดีมาก	         ลดข้อมูลสีที่เป็น Noise ออกไป (Ultrasound จริงก็ไม่มีสี)
     -CLAHE	     ✅ ดีมาก             ช่วยให้โมเดลแยก "น้ำ" ออกจาก "เนื้อเยื่อ" ได้เหมือนตาผู้เชี่ยวชาญ
     -Letterbox	 ✅ ดีมาก	         ป้องกันการบิดเบี้ยว ของสัดส่วนถุงน้ำ 100%
     -Resize 640   ✅ พอดี              ละเอียดพอที่จะเห็นถุงน้ำ แต่ไม่ใหญ่จนเทรนไม่ไหว
+    ใช้ทั้งใน V1 PDF flow และ V2 backend=yolo
     """  
     try :
+        classifier = ensure_yolo_model_ready()
         #! ทำ Pre-Process เพื่อลด Noise
         img_path = cv2.imread(path_img, cv2.IMREAD_GRAYSCALE) 
         if img_path is None : 
@@ -120,13 +137,13 @@ def preprocess_yolo(path_img ,target_size=640):
         final_img_bgr = cv2.cvtColor(final_img, cv2.COLOR_GRAY2BGR)
 
         # Inference expects a BGR 640x640 image matching the training preprocessing.
-        results=model(final_img_bgr)  
+        results=classifier(final_img_bgr)  
 
         if show_yolo_results:
             results[0].show()
 
         pred_class = results[0].probs.top1  
-        pred_names = model.names[int(pred_class)]
+        pred_names = classifier.names[int(pred_class)]
 
         # ค่าความมั่นใจ
         conf_score = results[0].probs.top1conf.item() 
@@ -139,13 +156,15 @@ def preprocess_yolo(path_img ,target_size=640):
 
         return results_ai , conf_score
 
+    except ModelUnavailableError:
+        raise
     except Exception as e :
         process_log.error(f"inference fail as {e}.")
         return None,None
 
 
 def render_pdf_pages(pdf_path):
-    """Render PDF pages with pdf2image first, then fall back to PyMuPDF for local runs."""
+    """Render PDF เป็น PIL images โดยลอง pdf2image ก่อน แล้ว fallback ไป PyMuPDF."""
     try:
         return convert_from_path(pdf_path)
     except Exception as pdf2image_error:
@@ -164,6 +183,7 @@ def render_pdf_pages(pdf_path):
 
 """ ฟังชั่นนี้สกัดทั้งหน้าต้นฉบับจาก PDF ไฟล์ ที่มี Text Results(ผลการตรวจจาก UltraSound โดยตรง)  """
 def crop_real_image(pil_img, debug=False, debug_path=None):
+    """ตัดภาพ ultrasound จริงออกจากหน้า PDF ทั้งหน้า เพื่อให้ infer/OCR ทำงานบนภาพหลักเท่านั้น."""
     # แปลงภาพ PIL เป็น grayscale numpy arrar
     img = np.array(pil_img.convert("L"))  # แปลงเป็น grayscale
     # ใช้ threshold ต่ำ(ต้องหาค่าเฉพาะของแต่ละภาพ ปรับค่า threshold เพื่อหาเกณฑ์ที่เหมาะสมใช้ได้ครอบคลุมเกือบทุกภาพ) fan shape (ultrasound) ออกจากพื้นหลัง
@@ -431,7 +451,7 @@ def convert_pdf_to_png(pdf_path):
                     workdate=work_date,
                     time=dt_val,
                     pregnant_p=pregnant_val,
-                    id_val=id_val,
+                    id_val=(id_val or "").strip() or "IDUnknown",
                     pdfFileName=os.path.basename(pdf_path),
                     depth_val=depth_val,
                     gain_val=gain_val,
@@ -445,6 +465,8 @@ def convert_pdf_to_png(pdf_path):
             else:
                 process_log.info(f"[DB SKIP] INSERT_ULTRASOUND_TO_DB disabled for {out_name}")
         return True
+    except ModelUnavailableError:
+        raise
     except Exception as e:
         print(f"[ERROR] convert_pdf_to_png: {e}")
         return False 

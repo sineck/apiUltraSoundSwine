@@ -1,31 +1,188 @@
-# UltrasoundPig API
+# apiUltraSoundSwine
 
-## ภาพรวม (Overview)
+## ระบบนี้คืออะไร
 
-UltrasoundPig คือ API ที่พัฒนาด้วย FastAPI (Python) และทำงานบน Docker มีหน้าที่หลักในการรับไฟล์ PDF (ภาพอัลตราซาวด์) จากผู้ใช้งาน, แปลงไฟล์เป็นรูปภาพ PNG, ดึงข้อมูลจากภาพ (OCR), และบันทึกผลลัพธ์ลงในฐานข้อมูล MySQL
+`apiUltraSoundSwine` คือ FastAPI สำหรับงานอัลตราซาวด์สุกร มี 2 งานหลัก:
 
-โปรเจคนี้ถูกออกแบบมาให้ง่ายต่อการติดตั้งและใช้งานผ่าน Docker, มีระบบจัดการ Log อัตโนมัติ, และมีเอกสารประกอบที่ชัดเจน
+1. รับ **PDF ultrasound** แล้วแปลงเป็นภาพ, OCR ข้อความบนภาพ, ให้ AI ตีความผล, และบันทึกลง MySQL ตาม config
+2. รับ **ภาพ ultrasound** แล้วให้ AI ตีความผลแบบ API
 
-## ฟีเจอร์หลัก (Key Features)
+ระบบนี้มีทั้ง **V1** ของเดิมที่ยังต้องคงไว้ และ **V2** ที่เลือก backend model ได้จาก config
 
-- **PDF Processing**: รับไฟล์ PDF และแปลงเป็นรูปภาพ PNG
-- **OCR Integration**: ดึงข้อมูลตัวอักษรจากรูปภาพ
-- **Database Storage**: บันทึกข้อมูลลงใน MySQL
-- **Dockerized**: รันโปรเจคทั้งหมดได้ง่ายๆ ผ่าน Docker และ Docker Compose
-- **Configurable**: ตั้งค่าการเชื่อมต่อ, AI model, threshold, และ dry-run DB ผ่านไฟล์ `config/.env`
-- **Automated Log Management**: มีระบบหมุนเวียนไฟล์ Log (Log Rotation) อัตโนมัติ ป้องกันปัญหาไฟล์ Log ใหญ่เกินไป
+## เส้นทางที่ใช้งานจริง
 
-## การเริ่มต้นใช้งาน
+### V1
 
-สำหรับนักพัฒนาที่ต้องการรันโปรเจคนี้ในเครื่องของตัวเอง กรุณาทำตามขั้นตอนในเอกสาร:
+- `GET /upload_form`
+  - หน้า HTML เดิมสำหรับอัปโหลด PDF แบบ manual
+- `POST /upload_pdf/`
+  - รับ PDF
+  - แปลงเป็นภาพใน `app/asset/`
+  - OCR ข้อมูลบนภาพ
+  - ใช้ YOLO รุ่นเดิม
+  - เขียน DB ตามค่า `INSERT_ULTRASOUND_TO_DB`
+- `GET /detect_form`
+  - หน้า HTML เดิมสำหรับอัปโหลดภาพแบบ manual
+- `POST /detect_follicle/`
+  - รับหลายภาพ
+  - ใช้ Gemini ตรวจถุงน้ำคร่ำ
+  - ตอบ JSON แบบ detection response
 
-- **ใช้ `config/.env` เป็น config จริงเสมอ** ส่วน `config/.env.example` เป็น template/mockup ให้รู้ว่าต้องตั้งค่าอะไรบ้าง
-- **[คู่มือการใช้งาน Docker (README-Docker.md)](./README-Docker.md)**: สำหรับการรันโปรเจคด้วย Docker ซึ่งเป็นวิธีที่แนะนำ
+### V2
 
-## เอกสารสำหรับนักพัฒนาและผู้ดูแลระบบ
+- `POST /v2/upload_pdf/`
+  - รับ PDF เหมือน V1
+  - เลือก backend จาก `PREGNANCY_DETECT_MODEL_V2`
+    - `anomaly`
+    - `yolo`
+  - ตอบกลับแบบ legacy เดิม `{"status":"complete"}` หรือ `{"status":"error"}`
+  - ถ้าเปิด DB จะเขียนลงตารางเดิมด้วย legacy labels
 
-สำหรับข้อมูลเกี่ยวกับโครงสร้างโปรเจค, Docker, runtime config, smoke test, และ deployment ให้ใช้เอกสารหลักชุดนี้:
+- `POST /v2/detection_pig`
+  - รับหลายภาพ
+  - เลือก backend จาก `PREGNANCY_DETECT_MODEL_V2`
+  - ตอบ JSON shape เดียวกับ `/detect_follicle/`
+  - ถ้าเปิด DB จะเขียนลงตารางเดิมด้วย legacy labels
 
-- **[README-Docker.md](./README-Docker.md)**: คู่มือรันระบบด้วย Docker, config จริง, smoke test, และคำสั่ง deployment ที่ใช้ได้จริง
-- **[Documentation/README.md](./Documentation/README.md)**: แผนที่เอกสารย่อยและขอบเขตว่าไฟล์ไหนเป็น reference เรื่องอะไร
-- **[AGENTS.MD](./AGENTS.MD)**: กติกาการทำงานของ coding agent ใน repo นี้ ไม่ใช่คู่มือผู้ใช้ระบบ
+## AI backend ที่ระบบใช้
+
+### YOLO legacy
+
+- ใช้กับ V1 `/upload_pdf/` เสมอ
+- ใช้กับ V2 ได้ถ้าตั้ง:
+
+```env
+PREGNANCY_DETECT_MODEL_V2=yolo
+```
+
+- โหลดโมเดลจาก `model/${ModelName}`
+
+### Anomaly backend
+
+- ใช้กับ V2 เท่านั้น
+- ตั้งค่า:
+
+```env
+PREGNANCY_DETECT_MODEL_V2=anomaly
+```
+
+- active model อ่านจาก:
+
+```text
+AnomalyDetection/artifacts/models/model_registry.json
+```
+
+## Config ที่สำคัญที่สุด
+
+ใช้ `config/.env` เป็น config จริงเสมอ  
+`config/.env.example` เป็นแค่ template
+
+ค่าที่ต้องรู้:
+
+```env
+MYAPI_PORT=3014
+INSERT_ULTRASOUND_TO_DB=true
+PREGNANCY_DETECT_MODEL_V2=anomaly
+ModelName=best.pt
+Min_Score_th=0.50
+MYSQL_HOST=...
+MYSQL_PORT=3306
+MYSQL_DATABASE=...
+MYSQL_USER=...
+MYSQL_PASSWORD=...
+GEMINI_API_KEY=...
+```
+
+ความหมายสั้น ๆ:
+
+- `INSERT_ULTRASOUND_TO_DB`
+  - `true` = เขียน MySQL
+  - `false` = dry-run ไม่เขียน DB
+- `PREGNANCY_DETECT_MODEL_V2`
+  - `anomaly` = ใช้ backend ใหม่ของ V2
+  - `yolo` = ใช้ backend YOLO เดิมของ V2
+
+## เริ่มใช้แบบเร็วที่สุด
+
+ถ้าจะรันระบบด้วย Docker ให้ใช้:
+
+```powershell
+docker compose --env-file config/.env up -d --build
+```
+
+ถ้าจะรันจาก image ที่ build แล้ว ให้ใช้:
+
+```powershell
+docker compose -f docker-compose.image.yml --env-file config/.env up -d --pull never
+```
+
+หลังรันแล้ว เปิดได้ที่:
+
+- API docs: `http://localhost:3014/docs`
+- V1 upload form: `http://localhost:3014/upload_form`
+- V1 detect form: `http://localhost:3014/detect_form`
+- version: `http://localhost:3014/version`
+- health: `http://localhost:3014/health`
+
+ก่อนยิงจริงทุกครั้ง ให้เช็ก `config/.env` ก่อนว่า
+
+```env
+INSERT_ULTRASOUND_TO_DB=true
+```
+
+หรือ
+
+```env
+INSERT_ULTRASOUND_TO_DB=false
+```
+
+ตรงกับสิ่งที่ต้องการจริง
+
+## โครงสร้างโปรเจคที่ควรรู้
+
+```text
+app/
+  main.py                FastAPI routes หลัก
+  process_pdf.py         V1 PDF flow + YOLO legacy + OCR + DB insert
+  process_detection.py   Gemini detection flow
+  process_anomaly.py     anomaly runtime backend
+  asset/                 ภาพที่แยกจาก PDF
+  detections/            ภาพ output ของ detection route
+
+AnomalyDetection/
+  scripts/               train / report / predict scripts
+  artifacts/models/      model registry และ anomaly artifacts
+
+config/
+  .env                   config จริง
+  .env.example           template
+
+tests/
+  mock_data/             ไฟล์ทดสอบจริง
+  unit/                  unit tests
+```
+
+## เอกสารที่ควรอ่านต่อ
+
+- [README-Docker.md](./README-Docker.md)
+  - วิธี build/run/deploy ด้วย Docker
+  - smoke test
+  - image transfer
+
+- [AnomalyDetection/README.md](./AnomalyDetection/README.md)
+  - การ train anomaly model
+  - model registry
+  - retrain API
+
+- [Documentation/README.md](./Documentation/README.md)
+  - แผนที่เอกสารย่อย
+
+- [AGENTS.MD](./AGENTS.MD)
+  - กติกาการทำงานของ coding agent ใน repo นี้
+
+## หลักการอ่าน repo นี้
+
+- source of truth ของ route อยู่ที่ `app/main.py`
+- source of truth ของ config runtime อยู่ที่ `config/.env`
+- source of truth ของ anomaly model active อยู่ที่ `AnomalyDetection/artifacts/models/model_registry.json`
+- เอกสารเป็นตัวช่วย แต่ถ้า doc กับ code ขัดกัน ให้เช็ก code/runtime/tests ก่อน

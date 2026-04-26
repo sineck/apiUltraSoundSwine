@@ -1,29 +1,47 @@
 
  
-from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, status
-from fastapi.responses import JSONResponse, HTMLResponse 
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.security import HTTPBasic, HTTPBasicCredentials 
 from fastapi.middleware.cors import CORSMiddleware   
 
 from typing import Annotated
 import os
 import logging
 from logging.handlers import RotatingFileHandler
+from dataclasses import dataclass
+from datetime import datetime
 from PIL import Image  # เผื่อใช้ในอนาคตและให้ requirements.txt ตรงกับโค้ด
+from pydantic import BaseModel, Field
+from app.anomaly_training import (
+    AnomalyTrainingAlreadyRunning,
+    current_anomaly_training_job,
+    start_anomaly_training,
+)
 from app.process_pdf import convert_pdf_to_png  
+from app.process_pdf import ModelUnavailableError
+from app.process_pdf import preprocess_yolo
+from app.process_pdf import (
+    CVCODE,
+    USER_ID,
+    default_ocr_info,
+    crop_real_image,
+    extract_info_from_image,
+    insert_ultrasound_to_db,
+    render_pdf_pages,
+    should_insert_ultrasound_to_db,
+)
 
 from app.process_detection import (
     analyze_ultrasound_core,
     save_annotation_result,
-    insert_detection_to_db,
     Format_Result,
     DetectionRespone,  # ✅ Import Schema จาก process_detection
     ImageResult)
 from app.process_anomaly import (
     format_anomaly_result,
     predict_anomaly_image,
-    save_anomaly_input,
+    save_detection_input,
 )
 from app.version import APP_NAME, APP_VERSION
 
@@ -35,6 +53,7 @@ import numpy as np
 from typing import List 
 from pathlib import Path 
 from dotenv import load_dotenv 
+from app.image_naming import build_image_filename
 
 # Central runtime path used by all modules to find config, uploads, and assets.
 pathInitial = Path(__file__).resolve().parent.parent   
@@ -92,15 +111,260 @@ app_log.addHandler(my_handler)
 
 
 def image_to_base64(image: np.ndarray) -> str:
+    """แปลงภาพ OpenCV เป็น data URL เพื่อใช้แสดงผลหรือ debug ในหน้าเว็บ."""
     _, buffer = cv2.imencode('.jpg', image)
     return f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}" 
 
 
 def app_metadata() -> dict:
+    """คืน metadata กลางของแอปไว้ใช้ใน route ระบบ เช่น /version และ /health."""
     return {
         "name": APP_NAME,
         "version": APP_VERSION,
     }
+
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/docs")
+
+
+def reload_runtime_config() -> None:
+    """reload ค่า .env ปัจจุบัน เพื่อให้ route ใช้ config ล่าสุดจากไฟล์จริง."""
+    load_dotenv(dotenv_path=str(pathInitial / "config" / ".env"), override=True)
+
+
+def anomaly_error_result(path_images: str, error_remark: str) -> ImageResult:
+    """สร้างผล error มาตรฐานของสาย detect รูป."""
+    return ImageResult(
+        path_images=path_images,
+        result="error",
+        confidence=0.0,
+        number_of_fetus=0,
+        error_remark=error_remark,
+    )
+
+
+def legacy_pdf_ai_label_from_result(result_text: str) -> str:
+    """map ข้อความผลลัพธ์ให้กลับเป็น label legacy ที่ตาราง UltraSoudPigAI ใช้อยู่."""
+    legacy_label = "2_NoPrenant_or_NotSure"
+    if result_text == "pregnant":
+        legacy_label = "1_Pregnant"
+    return legacy_label
+
+
+def detect_saved_anomaly_image(display_name: str, save_path: str) -> ImageResult:
+    """รัน anomaly backend กับภาพที่บันทึกแล้ว และ normalize ให้อยู่ใน ImageResult เดียวกัน."""
+    prediction = predict_anomaly_image(Path(save_path))
+    app_log.info(
+        "[ANOMALY] %s -> %s score=%s threshold=%s model=%s/%s",
+        display_name,
+        prediction["prediction"],
+        prediction["score_no_pregnant"],
+        prediction["threshold"],
+        prediction.get("feature_set", "unknown"),
+        prediction.get("model_name", "unknown"),
+    )
+    return format_anomaly_result(display_name, prediction, save_path)
+
+
+@dataclass(frozen=True)
+class PregnancyDetectionOutcome:
+    """ผลกลางของสาย V2 ที่เก็บทั้งผลตอบกลับและ label legacy สำหรับ DB."""
+    result: ImageResult
+    legacy_ai_label: str
+
+
+def detect_saved_pregnancy_image_with_backend(display_name: str, save_path: str) -> PregnancyDetectionOutcome:
+    """เลือก backend จาก config แล้วรวมผลให้อยู่รูปกลางเดียวก่อนส่งต่อไป response/DB."""
+    backend = selected_pregnancy_model()
+    result: ImageResult
+    legacy_ai_label: str
+
+    if backend in {"anomaly", "new"}:
+        result = detect_saved_anomaly_image(display_name, save_path)
+        legacy_ai_label = legacy_pdf_ai_label_from_result(result.result)
+    elif backend in {"yolo", "old", "legacy"}:
+        result_name, confidence = preprocess_yolo(save_path)
+        app_log.info("[PREGNANCY YOLO] %s -> %s confidence=%s", display_name, result_name, confidence)
+        result = format_yolo_pregnancy_result(display_name, save_path, result_name, confidence)
+        legacy_ai_label = result_name or legacy_pdf_ai_label_from_result(result.result)
+    else:
+        raise ValueError("PREGNANCY_DETECT_MODEL_V2 must be anomaly or yolo")
+
+    return PregnancyDetectionOutcome(result=result, legacy_ai_label=legacy_ai_label)
+
+
+def selected_pregnancy_model() -> str:
+    """อ่าน backend ที่ active จริงจาก config runtime."""
+    reload_runtime_config()
+    return os.getenv("PREGNANCY_DETECT_MODEL_V2", "anomaly").strip().lower()
+
+
+def format_yolo_pregnancy_result(display_name: str, save_path: str, result_name: str | None, confidence: float | None) -> ImageResult:
+    """แปลง label ของ YOLO ให้เป็นข้อความมาตรฐานแบบเดียวกับ route ตรวจรูป."""
+    result_value = result_name or "Unknown"
+    result_text = "not sure"
+    if result_value == "1_Pregnant":
+        result_text = "pregnant"
+    elif "NoPregnant" in result_value or "NoPrenant" in result_value:
+        result_text = "no pregnant"
+
+    return ImageResult(
+        path_images=save_path,
+        result=result_text,
+        confidence=round(float(confidence or 0.0), 2),
+        number_of_fetus=0,
+        error_remark="",
+    )
+
+
+def detect_saved_pregnancy_image(display_name: str, save_path: str) -> ImageResult:
+    """compat helper สำหรับจุดที่ต้องการแค่ ImageResult โดยไม่ต้องยุ่งกับ label ฝั่ง DB."""
+    return detect_saved_pregnancy_image_with_backend(display_name, save_path).result
+
+
+def build_ultrasound_db_payload(
+    *,
+    source_name: str,
+    save_path: str,
+    result: ImageResult,
+    legacy_ai_label: str,
+    path_for_db: str,
+    fallback_id_value: str,
+) -> dict:
+    """ประกอบ payload กลางสำหรับ insert UltraSoudPigAI ให้ image/PDF ใช้กติกา OCR ชุดเดียวกัน."""
+    ocr_result = extract_info_from_image(save_path)
+    if ocr_result is None:
+        ocr_result = default_ocr_info()
+    dt_val, _dt_in_img_match_val, pregnant_val, id_val, depth_val, gain_val = ocr_result
+
+    cleaned_id = (id_val or "").strip() or fallback_id_value
+    return {
+        "create_date": datetime.now(),
+        "workdate": datetime.now().strftime("%Y-%m-%d"),
+        "time": dt_val,
+        "pregnant_p": pregnant_val,
+        "id_val": cleaned_id,
+        "pdfFileName": source_name,
+        "depth_val": depth_val,
+        "gain_val": gain_val,
+        "path_val": path_for_db,
+        "file_name": Path(save_path).name,
+        "results_ai": legacy_ai_label,
+        "conf_score": result.confidence,
+        "cvcode": CVCODE,
+        "user_id": USER_ID,
+    }
+
+
+def persist_image_detection_to_db(
+    source_name: str,
+    save_path: str,
+    outcome: PregnancyDetectionOutcome,
+) -> ImageResult:
+    """เขียนผลของ V2 สายรูปลง DB โดยใช้ label legacy เดียวกับสาย PDF."""
+    reload_runtime_config()
+    if not should_insert_ultrasound_to_db() or outcome.result.result == "error":
+        return outcome.result
+
+    payload = build_ultrasound_db_payload(
+        source_name=source_name,
+        save_path=save_path,
+        result=outcome.result,
+        legacy_ai_label=outcome.legacy_ai_label,
+        path_for_db=str(Path(save_path).parent),
+        fallback_id_value=Path(save_path).stem,
+    )
+
+    try:
+        insert_ultrasound_to_db(**payload)
+        app_log.info("[PREGNANCY DB] inserted %s -> %s", source_name, save_path)
+    except Exception as db_error:
+        app_log.error("[PREGNANCY DB ERROR] %s: %s", source_name, db_error)
+        outcome.result.error_remark = f"DB insert failed: {db_error}"
+    return outcome.result
+
+
+class AnomalyTrainRequest(BaseModel):
+    feature_sets: str | None = Field(
+        default=None,
+        description="เช่น handcrafted,resnet18,dinov2 ถ้าไม่ส่งจะใช้ default ของ trainer",
+    )
+    model_keys: str | None = Field(
+        default=None,
+        description="ระบุ model_key คั่นด้วย comma หรือ all ถ้าไม่ส่งจะใช้ compact 4-model default",
+    )
+    batch_size: int = Field(default=16, ge=1, le=128)
+    generate_report: bool = True
+    detail_heatmaps: str = Field(default="active", pattern="^(none|active|all)$")
+    rebuild_index: bool = True
+    force: bool = False
+
+
+def save_pdf_page_asset(crop_img: Image.Image, page_number: int) -> str:
+    # บันทึกรูปที่ตัดจาก PDF ลง asset เพื่อให้ V2 PDF flow เก็บผลลัพธ์แบบเดียวกับสายเดิม
+    out_name = build_image_filename("pdf", page_number=page_number)
+    out_path = Path(asset_dir) / out_name
+    crop_rgb = np.array(crop_img.convert("RGB"))
+    crop_bgr = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(str(out_path), crop_bgr)
+    return str(out_path)
+
+
+def render_pdf_pages_to_asset(pdf_path: Path) -> list[tuple[str, str]]:
+    # ใช้ render/crop แบบเดียวกับงาน PDF เดิม แต่แยก helper ไว้ให้ V2 เรียกซ้ำได้
+    images = []
+    for idx, page in enumerate(render_pdf_pages(str(pdf_path)), start=1):
+        crop = crop_real_image(page)
+        save_path = save_pdf_page_asset(crop, idx)
+        images.append((f"{pdf_path.name}#page={idx}", save_path))
+    return images
+
+
+def normalize_db_id(id_val: str, save_path: str) -> str:
+    # ถ้า OCR หา ID ไม่เจอ ให้ใช้ค่าเดียวกันทุก backend เพื่อให้ filter/report ทำงานต่อได้
+    cleaned = (id_val or "").strip()
+    if cleaned:
+        return cleaned
+    return "IDUnknown"
+
+
+def persist_v2_pdf_result_to_db(
+    source_name: str,
+    save_path: str,
+    result: ImageResult,
+    legacy_ai_label: str,
+) -> None:
+    # V2 PDF ต้องยังเก็บผลลง DB ในรูปแบบ legacy label เพื่อให้รายงาน/ระบบเดิมอ่านต่อได้
+    reload_runtime_config()
+    if not should_insert_ultrasound_to_db() or result.result == "error":
+        return
+
+    payload = build_ultrasound_db_payload(
+        source_name=source_name,
+        save_path=save_path,
+        result=result,
+        legacy_ai_label=legacy_ai_label,
+        path_for_db=asset_dir,
+        fallback_id_value="IDUnknown",
+    )
+    payload["id_val"] = normalize_db_id(payload["id_val"], save_path)
+    insert_ultrasound_to_db(**payload)
+
+
+def process_v2_pdf_upload(pdf_path: Path, source_name: str) -> tuple[bool, str | None]:
+    # แกนของ /v2/upload_pdf/: render PDF -> เลือก model -> insert DB ตาม env -> คืนสถานะ legacy
+    try:
+        for _page_name, save_path in render_pdf_pages_to_asset(pdf_path):
+            outcome = detect_saved_pregnancy_image_with_backend(source_name, save_path)
+            persist_v2_pdf_result_to_db(source_name, save_path, outcome.result, outcome.legacy_ai_label)
+        return True, None
+    except ModelUnavailableError:
+        raise
+    except Exception as exc:
+        app_log.error("[V2 PDF ERROR] %s: %s", source_name, exc)
+        return False, str(exc)
 
 # --- HTML Form Endpoint ---
 @app.get("/upload_form", response_class=HTMLResponse)
@@ -136,14 +400,17 @@ async def upload_pdf(
         File(description="เลือกไฟล์ PDF ที่ต้องการอัปโหลด"),
     ]
 ):
+    # V1 เดิม: รับ PDF แล้ววิ่งเข้า pipeline convert_pdf_to_png โดยให้ env เป็นตัวคุม DB insert
     # Keep the PDF endpoint strict because the downstream converter expects a real PDF file.
-    if not file.filename.endswith(".pdf"):
+    source_name = Path(file.filename or "").name
+    if Path(source_name).suffix.lower() != ".pdf":
         raise HTTPException(status_code=400, detail="อนุญาตเฉพาะไฟล์ .pdf เท่านั้น")
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Content type ต้องเป็น application/pdf")
 
-    file_location = os.path.join(UPLOAD_DIR, file.filename)
-    app_log.info(f"[UPLOAD] get file: {file.filename} -> {file_location}")
+    stored_filename = build_image_filename("upload_pdf", extension=".pdf")
+    file_location = os.path.join(UPLOAD_DIR, stored_filename)
+    app_log.info(f"[UPLOAD] get file: {source_name} -> {file_location}")
 
     # Save the upload first; convert_pdf_to_png works with a filesystem path.
     try:
@@ -160,6 +427,9 @@ async def upload_pdf(
         app_log.info(f"[CONVERT] Start the process PDF to PNG wait..: {file_location}")
         result = convert_pdf_to_png(file_location)
         app_log.info(f"[CONVERT] convert_pdf_to_png result: {result}")
+    except ModelUnavailableError as e:
+        app_log.error(f"[ERROR] PDF model unavailable: {e}")
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         app_log.error(f"[ERROR] Failed the Process PDF to PNG: {e}")
         return {"status": "error", "detail": f"convert failed: {e}"}
@@ -264,14 +534,55 @@ async def detect_follicle_api(
 
 
 @app.post(
-    "/detect_anomaly/",
-    summary="Detect pregnancy with Anomaly model",
-    description="เลือกภาพ Ultrasound ส่งเข้า Anomaly model แล้วคืน JSON รูปแบบเดียวกับ detect_follicle",
+    "/v2/upload_pdf/",
+    summary="Upload PDF and detect pregnancy",
+    description="V2 ของ /upload_pdf/: รับ PDF เหมือนเดิม เลือก backend จาก PREGNANCY_DETECT_MODEL_V2 แล้วตอบแบบ legacy route เดิม",
+    tags=["PDF"],
+)
+async def upload_pdf_v2_api(
+    file: UploadFile = File(description="ไฟล์ PDF Ultrasound สำหรับ pregnancy model"),
+):
+    # V2: รับ PDF เหมือน V1 แต่เลือก backend จาก env และตอบกลับแบบ legacy route เดิม
+    source_name = Path(file.filename or "").name
+    if Path(source_name).suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="อนุญาตเฉพาะไฟล์ .pdf เท่านั้น")
+    if file.content_type and file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Content type ต้องเป็น application/pdf")
+
+    stored_filename = build_image_filename("upload_pdf_v2", extension=".pdf")
+    file_location = os.path.join(UPLOAD_DIR, stored_filename)
+    try:
+        with open(file_location, "wb") as f:
+            f.write(await file.read())
+        result, detail = process_v2_pdf_upload(Path(file_location), source_name)
+    except ModelUnavailableError as e:
+        app_log.error(f"[ERROR] V2 PDF model unavailable: {e}")
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        app_log.error(f"[ERROR] Save or process V2 PDF failed: {e}")
+        return {"status": "error", "detail": str(e)}
+    finally:
+        try:
+            if os.path.exists(file_location):
+                os.remove(file_location)
+        except Exception as cleanup_error:
+            app_log.warning(f"[WARN] Unable to delete V2 PDF file: {cleanup_error}")
+
+    if result:
+        return {"status": "complete"}
+    return {"status": "error", "detail": detail or "process failed"}
+
+
+@app.post(
+    "/v2/detection_pig",
+    summary="Detect pregnancy from images with configurable model",
+    description="รับรูป ultrasound หลายรูป แล้วเลือก backend จาก PREGNANCY_DETECT_MODEL_V2 โดยคืน response shape แบบเดียวกับ /detect_follicle/",
     tags=["Detection"],
 )
-async def detect_anomaly_api(
-    files: List[UploadFile] = File(description="ภาพ Ultrasound สำหรับ Anomaly model"),
+async def detect_pig_v2_api(
+    files: List[UploadFile] = File(description="ภาพ Ultrasound สำหรับ pregnancy model"),
 ):
+    # V2 รูป: รับหลายภาพแล้ว map ผลทุก model ให้เป็น response shape เดียวกับ detect_follicle
     if len(files) > max_images:
         raise HTTPException(
             status_code=400,
@@ -280,48 +591,67 @@ async def detect_anomaly_api(
 
     results = []
     for file in files:
-        filename = file.filename
+        filename = file.filename or "upload_image"
         try:
             contents = await file.read()
             img_cv2 = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
             if img_cv2 is None:
-                results.append(ImageResult(
-                    path_images=filename,
-                    result="error",
-                    confidence=0.0,
-                    number_of_fetus=0,
-                    error_remark="อ่านไฟล์ภาพไม่ได้"
-                ))
+                results.append(anomaly_error_result(filename, "อ่านไฟล์ภาพไม่ได้"))
                 continue
 
-            save_path = save_anomaly_input(img_cv2, filename)
-            prediction = predict_anomaly_image(Path(save_path))
-            app_log.info(
-                "[ANOMALY] %s -> %s score=%s threshold=%s model=%s/%s",
-                filename,
-                prediction["prediction"],
-                prediction["score_no_pregnant"],
-                prediction["threshold"],
-                prediction.get("feature_set", "unknown"),
-                prediction.get("model_name", "unknown"),
-            )
-            results.append(format_anomaly_result(filename, prediction, save_path))
-
+            # บันทึกรูปที่อัปโหลดไว้ก่อน เพื่อให้ทั้ง yolo/anomaly ใช้ path เดียวกัน
+            save_path = save_detection_input(img_cv2, filename)
+            outcome = detect_saved_pregnancy_image_with_backend(filename, save_path)
+            results.append(persist_image_detection_to_db(filename, save_path, outcome))
         except Exception as e:
-            app_log.error(f"[ANOMALY ERROR] {filename}: {e}")
-            results.append(ImageResult(
-                path_images=filename,
-                result="error",
-                confidence=0.0,
-                number_of_fetus=0,
-                error_remark=str(e)
-            ))
+            app_log.error(f"[V2 DETECTION PIG ERROR] {filename}: {e}")
+            results.append(anomaly_error_result(filename, str(e)))
 
     return DetectionRespone(
         main_results="success",
         error_massage="",
         results=results,
     )
+
+@app.post(
+    "/anomaly/retrain/",
+    summary="Train new anomaly pregnancy model",
+    description="เริ่ม train anomaly model ใหม่แบบ background แล้ว optionally สร้าง index/report ใหม่",
+    tags=["Anomaly Training"],
+    status_code=202,
+)
+async def retrain_anomaly_api(request: AnomalyTrainRequest | None = None):
+    payload = request or AnomalyTrainRequest()
+    try:
+        job = start_anomaly_training(
+            feature_sets=payload.feature_sets,
+            model_keys=payload.model_keys,
+            batch_size=payload.batch_size,
+            generate_report=payload.generate_report,
+            detail_heatmaps=payload.detail_heatmaps,
+            rebuild_index=payload.rebuild_index,
+            force=payload.force,
+        )
+        app_log.info("[ANOMALY TRAIN] started job=%s", job["job_id"])
+        return job
+    except AnomalyTrainingAlreadyRunning as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"มีงาน train anomaly กำลังทำอยู่แล้ว: {exc}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/anomaly/retrain/status/",
+    summary="Check anomaly training job status",
+    tags=["Anomaly Training"],
+)
+async def retrain_anomaly_status_api():
+    return current_anomaly_training_job()
 
 
 @app.get("/detect_form", response_class=HTMLResponse, tags=["Detection"])
@@ -398,7 +728,10 @@ def health_check():
         return {"status": "ok", "db": "connected", "app": app_metadata()}
     except Exception as e:
         app_log.error(f"[HEALTHCHECK] DB connect error: {e}")
-        return {"status": "error", "db": "unreachable", "detail": str(e), "app": app_metadata()}
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "db": "unreachable", "detail": str(e), "app": app_metadata()},
+        )
 
 if __name__ == "__main__":
     myapi_port = int(os.environ.get("MYAPI_PORT", 3014))

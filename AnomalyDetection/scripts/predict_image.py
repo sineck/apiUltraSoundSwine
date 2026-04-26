@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 
@@ -33,10 +33,12 @@ def resolve_active_model(registry_path: Path) -> Path:
     active = registry["active_model"]
     run_name, model_key = active.split("/", 1)
     model_ref = registry["runs"][run_name]["models"][model_key]
-    model_path = Path(model_ref["model_file"])
-    if not model_path.is_absolute():
-        model_path = registry_path.parent / model_path
-    return model_path
+    model_file = str(model_ref["model_file"])
+    model_path = Path(model_file)
+    if model_path.exists():
+        return model_path
+    model_filename = PureWindowsPath(model_file).name if "\\" in model_file else model_path.name
+    return registry_path.parent / run_name / model_filename
 
 
 def main() -> None:

@@ -1,11 +1,6 @@
 services:
-  # UltrasoundPig API (เชื่อมต่อ AWS RDS)
   api:
-    # image: apiultrasoundswine-api:latest
-    build:
-      context: .
-      args:
-        MYAPI_PORT: ${MYAPI_PORT:-3014}
+    image: apiultrasoundswine-api:latest
 
     # config/.env is the real runtime configuration. Do not run without it.
     env_file:
@@ -13,7 +8,7 @@ services:
     container_name: ai-ultrasound-swine
     restart: unless-stopped
     ports:
-      - "${MYAPI_PORT:-3014}:${MYAPI_PORT:-3014}" 
+      - "${MYAPI_PORT:-3014}:${MYAPI_PORT:-3014}"
 
     command: sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${MYAPI_PORT:-3014}"
     security_opt:
@@ -23,12 +18,10 @@ services:
     tmpfs:
       - /tmp
 
-    #  {เครื่อง host} : {/app Ubantu}
     volumes:
       - ./app/uploads:/app/app/uploads
       - ./app/asset:/app/app/asset
       - ./app/detections:/app/app/detections
-    #   - ./:/app  # mount แก้ logic และเปลี่ยนแปลงทันที
 
     networks:
       - ultrasoundpig_network
@@ -41,4 +34,4 @@ services:
 
 networks:
   ultrasoundpig_network:
-    driver: bridge 
+    driver: bridge

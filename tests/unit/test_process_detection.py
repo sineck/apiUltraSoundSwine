@@ -23,6 +23,15 @@ class _GeminiClient:
         self.models = _GeminiModels(text)
 
 
+class _FailingGeminiModels:
+    def generate_content(self, **kwargs):
+        raise RuntimeError("service unavailable")
+
+
+class _FailingGeminiClient:
+    models = _FailingGeminiModels()
+
+
 def test_scale_bbox_converts_normalized_coordinates_to_pixels():
     assert detection.scale_bbox([100, 200, 900, 800], img_width=1000, img_height=500) == (
         200,
@@ -54,6 +63,33 @@ def test_analyze_ultrasound_core_marks_empty_detection_as_not_pregnant(monkeypat
     assert result["status"] == "2_NoPregnant"
     assert result["sac_count"] == 0
     assert result["detections"] == []
+
+
+def test_analyze_ultrasound_core_raises_when_gemini_fails(monkeypatch):
+    monkeypatch.setattr(detection, "client", _FailingGeminiClient())
+
+    image = np.zeros((120, 160, 3), dtype=np.uint8)
+
+    try:
+        detection.analyze_ultrasound_core(image)
+    except detection.GeminiAnalysisError as exc:
+        assert "service unavailable" in str(exc)
+    else:
+        raise AssertionError("GeminiAnalysisError was not raised")
+
+
+def test_analyze_ultrasound_core_raises_when_client_unavailable(monkeypatch):
+    monkeypatch.setattr(detection, "client", None)
+    monkeypatch.setattr(detection, "GEMINI_CLIENT_ERROR", "missing key")
+
+    image = np.zeros((120, 160, 3), dtype=np.uint8)
+
+    try:
+        detection.analyze_ultrasound_core(image)
+    except detection.GeminiAnalysisError as exc:
+        assert "missing key" in str(exc)
+    else:
+        raise AssertionError("GeminiAnalysisError was not raised")
 
 
 def test_format_result_maps_internal_status_to_response_model():

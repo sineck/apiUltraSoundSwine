@@ -1,5 +1,5 @@
 from typing import List
-from PIL import Image, ImageDraw, ImageFont 
+from PIL import Image
 from pathlib import Path 
 from google import genai  
 from google.genai import types
@@ -14,12 +14,8 @@ import pymysql
 from ultralytics.utils.plotting import Annotator, colors 
 
 import json
-import re
 import logging
 from logging.handlers import RotatingFileHandler  
-from pydantic import BaseModel 
-import uuid 
-from datetime import datetime
 from app.image_naming import build_image_filename
 
 # Resolve project root once so config and output folders stay stable in Docker/local runs.
@@ -35,6 +31,10 @@ API_PORT = int(os.getenv("MYAPI_PORT", 3014))
 GEMINI_API_KEY=os.getenv("GEMINI_API_KEY") 
 MODEL_GEMINI=os.getenv("MODEL_GEMINI", "gemini-3-flash-preview")  
 min_score_threshold = float(os.getenv("min_score",'0.50'))
+
+
+class GeminiAnalysisError(RuntimeError):
+    """Raised when Gemini cannot return a usable detection payload."""
 
 
 IMG_RESULT_DIR = pathInitial / "app" / "detections"
@@ -175,7 +175,21 @@ def insert_detection_to_db (
 #================================
 #      Gemini client and prompt contract
 #================================
-client = genai.Client(api_key=GEMINI_API_KEY)  
+client = None
+GEMINI_CLIENT_ERROR: str | None = None
+if GEMINI_API_KEY:
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        GEMINI_CLIENT_ERROR = str(e)
+else:
+    GEMINI_CLIENT_ERROR = "GEMINI_API_KEY is not configured"
+
+
+def get_gemini_client():
+    if client is None:
+        raise GeminiAnalysisError(f"Gemini client is not available: {GEMINI_CLIENT_ERROR or 'unknown'}")
+    return client
 
 # ==========================================
 # 🧠 The Inference by GEMINI   (สร้าง Prompt Gemini)
@@ -240,7 +254,7 @@ def analyze_ultrasound_core(img_cv2: np.ndarray):
     
     # 1. Ask Gemini to return only JSON so the API response remains deterministic.
     try:
-        response = client.models.generate_content(
+        response = get_gemini_client().models.generate_content(
             model=MODEL_GEMINI, contents=[gemini_prompt + output_prompt, image_pil],
             config=types.GenerateContentConfig(temperature=0.1)
         )
@@ -248,7 +262,7 @@ def analyze_ultrasound_core(img_cv2: np.ndarray):
         raw_detections = json.loads(text) 
     except Exception as e:
         detect_log.error(f"Gemini API Error: {e}")
-        raw_detections = []
+        raise GeminiAnalysisError(f"Gemini analysis failed: {e}") from e
 
     # 2. Accept both the expected list shape and a single dict fallback.
     raw_list = []

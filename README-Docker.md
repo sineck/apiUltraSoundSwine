@@ -52,67 +52,110 @@ project-root/
   INSERT_ULTRASOUND_TO_DB=true
   ModelName=best.pt
   Min_Score_th=0.70
+  PREGNANCY_DETECT_MODEL_V2=anomaly
   ```
 - .env ต้องถูก ignore จาก git
 
 ## เริ่มต้นใช้งาน (Quick Start)
 
-ทำตามขั้นตอนต่อไปนี้เพื่อรันแอปพลิเคชัน
+โปรเจคนี้แยกการใช้งานเป็น 3 วิธี:
 
-### ขั้นตอนที่ 1: เตรียมไฟล์ Environment (`.env`)
+- **วิธี A: Clone โปรเจคมาทำงานต่อ** ใช้เมื่อจะเข้ามาอ่านโค้ด, แก้โค้ด, รัน test, หรือเตรียม build image ใหม่จาก source
+- **วิธี B1: สร้าง Image** ใช้เมื่อมี source code ครบและต้องการ build image จาก `Dockerfile`
+- **วิธี B2: Image Transfer** ใช้เมื่อมี image ที่ build แล้วและต้องการเอาไปรันอีกเครื่อง โดยไม่ build ใหม่
 
-ก่อนรันโปรเจค คุณต้องสร้างไฟล์สำหรับเก็บค่า Environment Variables ก่อน
+ทุกวิธีที่รัน container ต้องมี `config/.env` เพราะเป็น runtime configuration จริง. `config/.env.example` เป็น template เท่านั้น.
 
-1.  **เตรียมไฟล์ `config/.env` จาก `config/.env.example`**
-2.  แก้ไขค่าในไฟล์ `config/.env` ให้ตรงกับระบบของคุณ
+### วิธี A: Clone โปรเจคมาทำงานต่อ
 
-    ```env
-    MYAPI_PORT=3014
-    MYSQL_HOST=your-rds-endpoint.amazonaws.com
-    MYSQL_PORT=3306
-    MYSQL_DATABASE=your_database_name
-    MYSQL_USER=your_username
-    MYSQL_PASSWORD=your_password
-    INSERT_ULTRASOUND_TO_DB=true
-    ```
+วิธีนี้คือ workflow ฝั่ง source code ไม่ใช่ deployment โดยตรง:
 
-### ขั้นตอนที่ 2: รันแอปพลิเคชัน (เลือกวิธีใดวิธีหนึ่ง)
-
-#### **วิธี A: Build จากซอร์สโค้ด (สำหรับนักพัฒนา)**
-วิธีนี้จะสร้าง Docker Image ขึ้นมาใหม่จาก `Dockerfile` เหมาะสำหรับการเริ่มต้นโปรเจคครั้งแรกหรือเมื่อมีการแก้ไขโค้ด
-
-```bash
-# คำสั่งนี้จะ build image และรัน container ใน background
-docker compose --env-file config/.env up --build -d
+```powershell
+git clone <repo-url>
+cd apiUltraSoundSwine
 ```
 
-#### **วิธี B: Load จากไฟล์ Image (สำหรับย้ายไปรันเครื่องอื่น)**
-ในกรณีที่คุณมีไฟล์ Image อยู่แล้ว (เช่น `ultrasoundpig-api.tar`) สามารถโหลดและรันได้เลยโดยไม่ต้อง build ใหม่
+หลัง clone แล้วค่อยเลือกต่อว่าจะ build image ใหม่ด้วย **วิธี B1** หรือจะใช้ image ที่มีอยู่แล้วด้วย **วิธี B2**
 
-```bash
-# 1. โหลด Image จากไฟล์ .tar
-docker load -i ultrasoundpig-api.tar
+### วิธี B1: สร้าง Image
 
-# 2. รัน container จาก image ที่โหลดมา (ไม่ต้องใช้ --build)
-docker compose --env-file config/.env up -d
+เครื่องที่จะ build ต้องมี source code และ runtime artifacts ครบก่อนรัน:
+
+```text
+project-root/
+├── app/
+├── AnomalyDetection/
+│   ├── scripts/
+│   └── artifacts/
+│       └── models/
+│           ├── model_registry.json
+│           └── 20260426_114203/
+├── config/
+│   ├── .env
+│   └── .env.example
+├── model/
+│   ├── best.pt
+│   └── best_finetune_YOLO26-cls_Ver2_20260424.pt
+├── Dockerfile
+├── docker-compose.yml
+└── requirements-docker.txt
 ```
 
-### ขั้นตอนที่ 3: ตรวจสอบการทำงาน
+คำสั่งเดียวสำหรับ build และ run:
+
+```powershell
+docker compose --env-file config/.env up -d --build
+```
+
+คำสั่งนี้จะ build image ใหม่จาก `Dockerfile`, copy `model/` และ `AnomalyDetection/artifacts/models/` เข้า image, แล้ว start container. หลัง build แล้ว container ไม่ต้อง mount model/artifacts/logs จาก host.
+
+### วิธี B2: Image Transfer
+
+ใช้วิธีนี้เมื่อ build image เสร็จจากเครื่องต้นทางแล้วต้องเอาไปรันเครื่องอื่น. เครื่องปลายทางไม่ต้องมี source code, `model/`, หรือ `AnomalyDetection/artifacts/models/` เพราะอยู่ใน image แล้ว.
+
+เครื่องต้นทาง export image:
+
+```powershell
+docker save apiultrasoundswine-api:latest -o apiultrasoundswine-api.tar
+```
+
+เครื่องปลายทางต้องมีอย่างน้อย:
+
+```text
+deploy-folder/
+├── apiultrasoundswine-api.tar
+├── docker-compose.image.yml
+└── config/
+    └── .env
+```
+
+เครื่องปลายทาง load image:
+
+```powershell
+docker load -i apiultrasoundswine-api.tar
+```
+
+คำสั่งเดียวสำหรับ run จาก image ที่ load แล้ว:
+
+```powershell
+docker compose -f docker-compose.image.yml --env-file config/.env up -d
+```
+
+วิธีนี้ไม่ใช้ `--build` และไม่ต้องมี `model/` บนเครื่องปลายทาง.
+
+### ตรวจสอบการทำงานหลังรัน
 
 - **เปิดหน้า API**: `http://localhost:${MYAPI_PORT}/docs` (default: 3014)
 - **เปิดหน้าอัปโหลด**: `http://localhost:${MYAPI_PORT}/upload_form`
 - **เปิดหน้าตรวจรูปด้วย Gemini**: `http://localhost:${MYAPI_PORT}/detect_form`
-- **API ตรวจรูปด้วย Anomaly model**: `POST http://localhost:${MYAPI_PORT}/detect_anomaly/`
+- **API อัปโหลด PDF V1**: `POST http://localhost:${MYAPI_PORT}/upload_pdf/`
+- **API อัปโหลด PDF V2 ด้วย pregnancy model**: `POST http://localhost:${MYAPI_PORT}/v2/upload_pdf/`
+- **API ตรวจรูปหมูด้วย pregnancy model**: `POST http://localhost:${MYAPI_PORT}/v2/detection_pig`
 - **ดูชื่อและเวอร์ชันแอป**: `http://localhost:${MYAPI_PORT}/version`
 - **ตรวจสุขภาพ API + MySQL**: `http://localhost:${MYAPI_PORT}/health`
 - **ดู Log การทำงาน**:
   ```bash
   docker compose logs -f api
-  ```
-- **ดูไฟล์ Log ที่ mount ออกมาจาก container**:
-  ```powershell
-  Get-ChildItem logs
-  Get-Content -Encoding UTF8 logs\app.log -Tail 50
   ```
 
 ---
@@ -120,6 +163,31 @@ docker compose --env-file config/.env up -d
 ## คำสั่ง Docker Compose อื่นๆ ที่ใช้บ่อย
 - **หยุดการทำงาน:** `docker compose down`
 - **รีสตาร์ท:** `docker compose restart`
+
+## คำสั่ง Docker ที่ใช้บ่อย
+
+```powershell
+# build image ใหม่จาก source
+docker build -t apiultrasoundswine-api:latest .
+
+# run จาก source compose
+docker compose --env-file config/.env up -d --build
+
+# run จาก image compose
+docker compose -f docker-compose.image.yml --env-file config/.env up -d --pull never
+
+# หยุด service ที่รันจาก image compose
+docker compose -f docker-compose.image.yml --env-file config/.env down
+
+# ดู logs ของ service api
+docker compose -f docker-compose.image.yml --env-file config/.env logs -f api
+
+# export image เป็นไฟล์ .tar
+docker save apiultrasoundswine-api:latest -o apiultrasoundswine-api.tar
+
+# import image จากไฟล์ .tar
+docker load -i apiultrasoundswine-api.tar
+```
 
 ## Health และ Version
 
@@ -168,11 +236,70 @@ PY"
 
 ผลที่คาดหวัง: `db_insert_enabled=False`, `result=True`, และมี PNG ใหม่ใน `app/asset/`
 
+### Smoke Test V1 / V2 แบบไม่ลง DB
+
+ไม่ว่าจะใช้ **วิธี B1: สร้าง Image** หรือ **วิธี B2: Image Transfer** ให้ตั้งค่าเดียวกันก่อน:
+
+```env
+INSERT_ULTRASOUND_TO_DB=false
+```
+
+จากนั้นรัน container ตามวิธีที่เลือก:
+
+- **B1: สร้าง Image**
+  ```powershell
+  docker compose --env-file config/.env up -d --build
+  ```
+- **B2: Image Transfer**
+  ```powershell
+  docker load -i apiultrasoundswine-api.tar
+  docker compose -f docker-compose.image.yml --env-file config/.env up -d
+  ```
+
+แล้วทดสอบ route หลักด้วย mock data:
+
+- **V1 PDF**
+  ```powershell
+  curl -X POST "http://127.0.0.1:3014/upload_pdf/" -F "file=@tests/mock_data/sample_input.pdf;type=application/pdf"
+  ```
+  ค่าที่คาดหวัง:
+  ```json
+  {"status":"complete"}
+  ```
+
+- **V2 PDF**
+  ```powershell
+  curl -X POST "http://127.0.0.1:3014/v2/upload_pdf/" -F "file=@tests/mock_data/sample_input.pdf;type=application/pdf"
+  ```
+  ค่าที่คาดหวัง:
+  ```json
+  {"status":"complete"}
+  ```
+
+- **V2 รูป**
+  ```powershell
+  curl -X POST "http://127.0.0.1:3014/v2/detection_pig" -F "files=@tests/mock_data/sample_input.png;type=image/png"
+  ```
+  ค่าที่คาดหวังคือ response shape แบบ `/detect_follicle/` และ `main_results` ต้องเป็น `success`
+
+เมื่อ `INSERT_ULTRASOUND_TO_DB=false`:
+
+- V1 `/upload_pdf/` ต้องแปลง PDF และเขียนไฟล์ output ได้ตามปกติ
+- V2 `/v2/upload_pdf/` ต้อง infer และตอบ legacy shape ได้ตามปกติ
+- V2 `/v2/detection_pig` ต้อง infer และตอบ JSON shape เดิมได้ตามปกติ
+- ทั้ง 3 เส้นต้อง **ไม่** เขียนข้อมูลลง MySQL
+
 ---
 
-## Anomaly Detection API
+## Pregnancy Model API
 
-`POST /detect_anomaly/` รับ field `files` แบบเดียวกับ `/detect_follicle/` และคืน JSON shape เดียวกัน:
+Runtime ปัจจุบันเหลือ 2 รุ่นหลัก:
+
+- `POST /upload_pdf/` คือ V1 เดิมของระบบ รับ field `file` สำหรับ PDF หนึ่งไฟล์ แล้ววิ่งเข้า pipeline `convert_pdf_to_png()` ตามเดิม โดยใช้ env `INSERT_ULTRASOUND_TO_DB` คุมว่าจะเขียน DB หรือไม่
+- `POST /v2/upload_pdf/` คือ V2 ฝั่ง PDF รับ field `file` สำหรับ PDF หนึ่งไฟล์ เหมือน `/upload_pdf/` เดิม แต่เลือก backend จาก `PREGNANCY_DETECT_MODEL_V2`, insert DB แบบ PDF flow เดิม, และตอบ legacy shape `{"status":"complete"}` หรือ `{"status":"error"}`
+- `POST /v2/detection_pig` คือ V2 ฝั่งรูป รับ field `files` สำหรับไฟล์รูปหลายไฟล์ แล้วเลือก backend จาก `PREGNANCY_DETECT_MODEL_V2` โดยคืน JSON แบบเดียวกับ `/detect_follicle/`
+
+`/v2/detection_pig` ทำงานได้ทั้ง backend `anomaly` และ `yolo` และคืน JSON shape เดียวกันเสมอ:
 
 ```json
 {
@@ -180,7 +307,7 @@ PY"
   "error_massage": "",
   "results": [
     {
-      "path_images": "app/detections/20260426_scan_anomaly_xxxxxx.png",
+      "path_images": "app/detections/preg_pdf_20260426_130909_693921_p001_4e243620.png",
       "result": "pregnant",
       "confidence": 1.0,
       "number_of_fetus": 0,
@@ -190,27 +317,51 @@ PY"
 }
 ```
 
-ค่า model active อ่านจาก `AnomalyDetection/artifacts/models/model_registry.json` ภายใต้ project root ปัจจุบันเสมอ. อย่าใช้ absolute path จากเครื่อง train เป็น runtime source of truth. โค้ดรองรับ registry ที่ยังมี Windows path เก่าอยู่ใน `model_file` โดย resolve กลับมาที่ project root ปัจจุบันแทน.
+เลือก backend ด้วย `config/.env`:
+
+```env
+# anomaly = ใช้โมเดลใหม่จาก AnomalyDetection/artifacts/models/model_registry.json
+# yolo    = ใช้โมเดลเก่าจาก model/${ModelName}
+PREGNANCY_DETECT_MODEL_V2=anomaly
+```
+
+ถ้าตั้ง `PREGNANCY_DETECT_MODEL_V2=anomaly` ค่า active model จะอ่านจาก `AnomalyDetection/artifacts/models/model_registry.json` ภายใต้ project root ปัจจุบันเสมอ. อย่าใช้ absolute path จากเครื่อง train เป็น runtime source of truth. โค้ดรองรับ registry ที่ยังมี Windows path เก่าอยู่ใน `model_file` โดย resolve กลับมาที่ project root ปัจจุบันแทน.
+
+ถ้าตั้ง `PREGNANCY_DETECT_MODEL_V2=yolo` จะใช้โมเดลเก่าใน `model/` ตามค่า `ModelName` และ threshold จาก `Min_Score_th`.
+
+ถ้า `INSERT_ULTRASOUND_TO_DB=true` เส้น V1 `/upload_pdf/`, V2 `/v2/upload_pdf/`, และ V2 `/v2/detection_pig` จะ insert ผลลงตารางเดียวกับ PDF flow เดิม (`UltraSoudPigAI`) ต่อรายการ. สำหรับ V2 ทั้งสองเส้น ค่า `results_ai` จะถูก normalize ให้เป็น legacy label เดียวกันเสมอ (`1_Pregnant` หรือ `2_NoPrenant_or_NotSure`) ไม่ว่าจะใช้ backend `yolo` หรือ `anomaly`; ส่วนรูปที่แยกจาก PDF จะถูกเก็บไว้ใต้ `app/asset/`.
+
+หมายเหตุ: transition routes เดิม เช่น `/detect_pregnancy_pdf/`, `/detect_anomaly_pdf/`, `/detect_pregnancy_pic/`, และ `/detect_anomaly_pic/` ถูกถอดออกแล้ว เพื่อให้ runtime เหลือเฉพาะ V1 กับ V2 ที่ใช้งานจริง.
 
 หมายเหตุ: โฟลเดอร์จริงของระบบนี้คือ `AnomalyDetection` ใต้ project root ไม่ใช่ `Anomaly` หรือชื่ออื่น. active model ปัจจุบันเป็น `handcrafted__logistic_regression_balanced` จึงไม่เรียก DINOv2 ใน runtime ปกติ.
 
-### DINOv2 weights
+### Deep feature weights
 
-Dockerfile ตั้ง `BAKE_DINOV2_WEIGHTS=true` เป็นค่าเริ่มต้น เพื่อ pre-download DINOv2 ผ่าน `torch.hub` เข้า `TORCH_HOME=/app/.cache/torch` ระหว่าง build. เหตุผลคือถ้าวันหลังเปลี่ยน `model_registry.json` ให้ active model เป็นกลุ่ม `dinov2__...` แล้ว production ถูก block network, container จะยังมี cache สำหรับ DINOv2 อยู่แล้ว.
+โค้ดสร้าง anomaly artifacts จริงมี deep feature 2 กลุ่มที่ต้องใช้ pretrained weights ถ้าเลือกเป็น active model:
 
-ถ้าต้องการ image เล็กกว่าและแน่ใจว่าไม่ใช้ `dinov2__...` ให้ build ด้วย:
+- `resnet18__...` เรียก `ResNet18_Weights.DEFAULT` จาก torchvision
+- `dinov2__...` เรียก `torch.hub.load("facebookresearch/dinov2", "dinov2_vits14")`
+
+Dockerfile ตั้งค่า default ให้ pre-download weights ทั้งสองกลุ่มเข้า `TORCH_HOME=/app/.cache/torch` ระหว่าง build:
+
+- `BAKE_DINOV2_WEIGHTS=true`
+- `BAKE_RESNET18_WEIGHTS=true`
+
+เหตุผลคือถ้าวันหลังเปลี่ยน `model_registry.json` ให้ active model เป็นกลุ่ม `resnet18__...` หรือ `dinov2__...` แล้ว production ถูก block network, container จะยังมี cache สำหรับ feature extractor อยู่แล้ว.
+
+ถ้าต้องการ image เล็กกว่าและแน่ใจว่าไม่ใช้ deep feature models ให้ build ด้วย:
 
 ```powershell
-docker build --build-arg BAKE_DINOV2_WEIGHTS=false -t apiultrasoundswine-api:latest .
+docker build --build-arg BAKE_DINOV2_WEIGHTS=false --build-arg BAKE_RESNET18_WEIGHTS=false -t apiultrasoundswine-api:latest .
 ```
 
-ถ้าเปลี่ยน active model เป็น `dinov2__...` ต้องมีอย่างใดอย่างหนึ่ง:
+ถ้าเปลี่ยน active model เป็น `resnet18__...` หรือ `dinov2__...` ต้องมีอย่างใดอย่างหนึ่ง:
 
-- ใช้ image ที่ build ด้วย `BAKE_DINOV2_WEIGHTS=true`
-- server มี network ให้ `torch.hub` ดาวน์โหลด DINOv2 code/weights ตอนรันครั้งแรก
+- ใช้ image ที่ build ด้วย deep weight bake args เป็น `true`
+- server มี network ให้ torchvision หรือ `torch.hub` ดาวน์โหลด weights ตอนรันครั้งแรก
 - เตรียม torch hub cache ไว้ล่วงหน้าแล้ว mount เข้า container
 
-สำหรับ production ที่ network ถูก block ไม่ควรพึ่ง first-run download ของ DINOv2.
+สำหรับ production ที่ network ถูก block ไม่ควรพึ่ง first-run download ของ pretrained weights.
 
 ---
 
@@ -223,9 +374,19 @@ Dockerfile ใช้ `requirements-docker.txt` แยกจาก `requirements.
 - ใช้ `opencv-python-headless` ชุดเดียวสำหรับ API runtime
 - ใช้ Python stdlib สำหรับ Docker healthcheck แทน `curl`
 - ไม่ copy `config/.env` เข้า image
-- ค่า default จะ bake DINOv2 weights/cache เข้า image ด้วย `BAKE_DINOV2_WEIGHTS=true`; ถ้าปิดจะลดขนาดลงประมาณ 100-150 MB แต่จะรัน active model กลุ่ม `dinov2__...` แบบ offline ไม่ได้
+- local Docker build copy `model/` และ `AnomalyDetection/artifacts/models/` เข้า image เพื่อให้ย้าย image ไปเครื่องอื่นได้โดยไม่ต้องย้าย model แยก
+- ค่า default จะ bake DINOv2 และ ResNet18 weights/cache เข้า image ด้วย `BAKE_DINOV2_WEIGHTS=true` และ `BAKE_RESNET18_WEIGHTS=true`; ถ้าปิดจะลดขนาดลง แต่จะรัน active model กลุ่ม `dinov2__...` หรือ `resnet18__...` แบบ offline ไม่ได้
 
-ขนาด image ที่ตรวจล่าสุดก่อน bake DINOv2: `apiultrasoundswine-api:latest` ประมาณ `1.78GB`. เมื่อ bake DINOv2 แล้วคาดว่าจะเพิ่มประมาณ `100-150 MB` ขึ้นกับ torch hub cache ที่ดาวน์โหลดได้จริง.
+ขนาด image ที่ตรวจล่าสุดหลัง bake DINOv2 + ResNet18 และ copy runtime artifacts: `apiultrasoundswine-api:latest` ประมาณ `2.06GB`. Cache ใน `TORCH_HOME` ตรวจได้ประมาณ `132 MB` และมีไฟล์ `dinov2_vits14_pretrain.pth` กับ `resnet18-f37072fd.pth` อยู่จริง.
+
+### Runtime model artifacts
+
+GitHub repo อาจไม่ได้เก็บไฟล์ใหญ่บางชุด เช่น `model/`, `AnomalyDetection/artifacts/models/`, และ `config/.env`. ถ้าใช้วิธี B1: สร้าง Image ต้องเตรียมโฟลเดอร์เหล่านี้ให้ครบก่อน build:
+
+- `model/` สำหรับ YOLO PDF classifier เช่น `best_finetune_YOLO26-cls_Ver2_20260424.pt`
+- `AnomalyDetection/artifacts/models/` สำหรับ `model_registry.json` และ `.joblib` anomaly artifacts
+
+ถ้าใช้วิธี B2: Image Transfer ไม่ต้องมีสองโฟลเดอร์นี้บนเครื่องปลายทาง เพราะถูกฝังอยู่ใน image ตั้งแต่เครื่องต้นทางแล้ว.
 
 ---
 
@@ -250,42 +411,42 @@ volumes:
   - ./app/uploads:/app/app/uploads
   - ./app/asset:/app/app/asset
   - ./app/detections:/app/app/detections
-  - ./logs:/app/logs
 ```
 - **ความหมาย:** เป็นการ "เชื่อมโฟลเดอร์" (Mount) ระหว่างโปรเจคของคุณกับโฟลเดอร์ภายใน Container ทำให้ข้อมูลไม่หายไปเมื่อปิด Container
 - **`./app/uploads:/app/app/uploads`**: ไฟล์ PDF ที่อัปโหลดเข้าไปใน Container จะถูกบันทึกไว้ที่โฟลเดอร์ `app/uploads` ในโปรเจคของคุณด้วย
 - **`./app/asset:/app/app/asset`**: ไฟล์รูปภาพ PNG ที่ถูกแปลง จะถูกบันทึกไว้ที่ `app/asset` ในโปรเจคของคุณ
 - **`./app/detections:/app/app/detections`**: รูป annotated จาก `/detect_follicle/` จะถูกบันทึกกลับออกมาที่ host
-- **`./logs:/app/logs`**: ไฟล์ log ของแอปจะถูกเขียนออกมาที่ `logs/` ในโปรเจค
+- ไม่ mount `model/`, `AnomalyDetection/artifacts/models/`, หรือ `logs/` ใน compose ปัจจุบัน. Model อยู่ใน image; log อยู่ใน container และดูผ่าน `docker compose logs -f api`.
 
 ### หมายเหตุ
 - สคริปต์ utility เช่น run_api.sh, setup_env.sh, .bat ต่างๆ จะถูกรวมไว้ในโฟลเดอร์ `scripts/` เพื่อความเป็นระเบียบ 
 
 ## การจัดการ Log
 
-แอปเขียน runtime log ลงโฟลเดอร์ `logs/` ที่ root ของโปรเจค และใช้ `RotatingFileHandler` เพื่อกันไฟล์ใหญ่เกินไป
+แอปเขียน runtime log ลง `/app/logs` ภายใน container และใช้ `RotatingFileHandler` เพื่อกันไฟล์ใหญ่เกินไป
 
 - `logs/app.log`: FastAPI upload, convert, health check, และ error หลัก
 - `logs/precess.log`: PDF render, crop, YOLO classify, OCR, และ DB skip/insert ของ PDF flow
 - `logs/detect.log`: Gemini image detection และ annotated image save
 
-ไฟล์ log จริงถูก ignore จาก git/docker แล้ว เหลือ `logs/.gitkeep` เพื่อให้มีโฟลเดอร์ใน repo. ใน Docker Compose ให้ mount `./logs:/app/logs` เพื่อเก็บ log ไว้บน host.
+ไฟล์ log จริงถูก ignore จาก git/docker แล้ว. Compose ปัจจุบันไม่ mount `logs/`; ให้ดู log ด้วย `docker compose logs -f api`. ถ้าต้องการเก็บไฟล์ log บน host ค่อยเพิ่ม volume `./logs:/app/logs` เอง.
 
 ## Deployment Package
 
-สำหรับส่งไปรันบน server ให้เตรียมอย่างน้อย:
+ถ้า deploy ด้วย Image Transfer ให้เตรียมอย่างน้อย:
 
-1. `ultrasoundpig-api.tar` จาก `docker save`
-2. `docker-compose.yml`
+1. `apiultrasoundswine-api.tar` จาก `docker save`
+2. `docker-compose.image.yml`
 3. `README-Docker.md`
 4. `config/.env.example`
-5. โฟลเดอร์เปล่าสำหรับ volume: `app/uploads/`, `app/asset/`, `app/detections/`, และ `logs/`
+5. `config/.env` ที่เป็นค่าจริงของ server
+6. โฟลเดอร์เปล่าสำหรับ output volume: `app/uploads/`, `app/asset/`, `app/detections/`
 
 หลังแตกไฟล์บน server ให้สร้าง `config/.env` จาก template แล้วรัน:
 
 ```bash
-docker load -i ultrasoundpig-api.tar
-docker compose --env-file config/.env up -d
+docker load -i apiultrasoundswine-api.tar
+docker compose -f docker-compose.image.yml --env-file config/.env up -d
 ```
 
 ## หมายเหตุสำคัญ (Important Notes)

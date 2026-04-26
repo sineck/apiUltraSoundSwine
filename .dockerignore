@@ -16,7 +16,11 @@ config/.env
 
 # Ignore asset files in app
 app/asset/  
+app/uploads/
+app/detections/
 backup/
+AnomalyDetection/asset/
+AnomalyDetection/outputs/
 
 # Ignore local Docker image exports and archives
 *.tar

@@ -54,7 +54,7 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def discover_dataset(asset_dir: Path) -> list[ImageRow]:

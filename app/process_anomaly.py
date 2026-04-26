@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
 import sys
@@ -9,6 +7,7 @@ import numpy as np
 
 from app.image_naming import build_image_filename
 from app.process_detection import ImageResult
+from app.process_pdf import crop_real_image, render_pdf_pages
 
 
 pathInitial = Path(__file__).resolve().parent.parent
@@ -33,6 +32,7 @@ from anomaly_lib import (  # noqa: E402
 
 
 def resolve_active_anomaly_model(registry_path: Path = ANOMALY_REGISTRY) -> Path:
+    """หาไฟล์ model active จาก registry โดยรองรับ path เก่าที่มาจากเครื่อง train ด้วย."""
     registry = load_json(registry_path)
     active = registry["active_model"]
     run_name, model_key = active.split("/", 1)
@@ -50,11 +50,13 @@ def resolve_active_anomaly_model(registry_path: Path = ANOMALY_REGISTRY) -> Path
 
 @lru_cache(maxsize=1)
 def load_active_anomaly_bundle() -> tuple[Path, dict]:
+    """โหลด model bundle active ครั้งเดียวต่อ process เพื่อลด overhead ตอนเรียก API ซ้ำ."""
     model_path = resolve_active_anomaly_model()
     return model_path, load_model_bundle(model_path)
 
 
 def predict_anomaly_image(image_path: Path) -> dict:
+    """รัน anomaly inference กับภาพเดียว แล้วคืนข้อมูลดิบที่ใช้ทั้ง log และ formatter."""
     model_path, bundle = load_active_anomaly_bundle()
     row = ImageRow(path=image_path, split="api", label_name="unknown", target=None)
 
@@ -82,20 +84,22 @@ def predict_anomaly_image(image_path: Path) -> dict:
 
 
 def anomaly_confidence(prediction: dict) -> float:
+    """คำนวณ confidence ให้เป็นสเกล 0..1 จาก score ของโมเดล anomaly."""
     score = float(prediction["score_no_pregnant"])
+    confidence = 0.0
     if prediction.get("estimator_type") == "sklearn_supervised" and 0.0 <= score <= 1.0:
         confidence = score if prediction["prediction"] == "no_pregnant" else 1.0 - score
-        return round(max(0.0, min(1.0, confidence)), 2)
-    return 0.0
+        confidence = round(max(0.0, min(1.0, confidence)), 2)
+    return confidence
 
 
 def format_anomaly_result(filename: str, prediction: dict, save_path: str) -> ImageResult:
+    """แปลงผลดิบของ anomaly ให้เป็น ImageResult กลางที่ route สายรูปใช้ร่วมกัน."""
+    result_text = "not sure"
     if prediction["prediction"] == "pregnant":
         result_text = "pregnant"
     elif prediction["prediction"] == "no_pregnant":
         result_text = "no pregnant"
-    else:
-        result_text = "not sure"
 
     return ImageResult(
         path_images=save_path,
@@ -106,9 +110,27 @@ def format_anomaly_result(filename: str, prediction: dict, save_path: str) -> Im
     )
 
 
-def save_anomaly_input(img_cv2: np.ndarray, org_filename: str) -> str:
+def save_anomaly_cv2(img_cv2: np.ndarray, kind: str = "anomaly", page_number: int | None = None) -> str:
+    """บันทึกภาพผลลัพธ์/ภาพกลางลงโฟลเดอร์ detections พร้อมตั้งชื่อไฟล์มาตรฐาน."""
     output_dir = pathInitial / "app" / "detections"
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / build_image_filename("anomaly")
+    out_path = output_dir / build_image_filename(kind, page_number=page_number)
     cv2.imwrite(str(out_path), img_cv2)
     return str(out_path)
+
+
+def save_detection_input(img_cv2: np.ndarray, org_filename: str) -> str:
+    # ใช้เก็บภาพ input ของสาย detect รูป ไม่ผูกกับ anomaly อย่างเดียวแล้ว
+    return save_anomaly_cv2(img_cv2, kind="anomaly")
+
+
+def render_anomaly_pdf_images(pdf_path: Path) -> list[tuple[str, str]]:
+    """render และ crop PDF ทีละหน้าแล้วบันทึกเป็นภาพสำหรับสาย anomaly/V2."""
+    images = []
+    for idx, page in enumerate(render_pdf_pages(str(pdf_path)), start=1):
+        crop = crop_real_image(page)
+        crop_rgb = np.array(crop.convert("RGB"))
+        crop_bgr = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2BGR)
+        save_path = save_anomaly_cv2(crop_bgr, kind="preg_pdf", page_number=idx)
+        images.append((f"{pdf_path.name}#page={idx}", save_path))
+    return images
