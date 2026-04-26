@@ -174,9 +174,6 @@ tests/
   - model registry
   - retrain API
 
-- [Documentation/README.md](./Documentation/README.md)
-  - แผนที่เอกสารย่อย
-
 - [AGENTS.MD](./AGENTS.MD)
   - กติกาการทำงานของ coding agent ใน repo นี้
 

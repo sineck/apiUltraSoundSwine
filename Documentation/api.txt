@@ -1,7 +1,0 @@
-
-
-# call api
-- http://localhost:3014/docs  
-
-# ทดลอง pridict ด้วย gemini 
-- http://localhost:3014/detect_form
