@@ -128,6 +128,14 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 config/retrain_anomaly.json
 ```
 
+หลัง train/index/report เสร็จ pipeline จะรัน compare ต่ออัตโนมัติด้วย:
+
+```powershell
+.\.venv\Scripts\python.exe tests\run_validate_compare.py --write-report
+```
+
+ดังนั้น `AnomalyDetection/outputs/report/index.html` ชุดล่าสุดจะถูกรีเฟรชจากผล compare ทันทีหลัง retrain
+
 ## Dataset Layout
 
 โฟลเดอร์นี้พูดถึงเฉพาะ dataset สำหรับ train/validate/test ของ anomaly workflow ไม่ได้อธิบายไฟล์ output ของ V1/V2 runtime
@@ -247,7 +255,7 @@ AnomalyDetection/artifacts/models/model_registry.json
 To generate a readable artifact map for the active run:
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\build_artifact_index.py
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.build_artifact_index
 ```
 
 This writes `_index/artifact_manifest.json`, `_index/scaler_index.json`, and `_index/model_summary.csv` inside the run folder. Use these files to find each model's `.joblib`, readable weights, predictions, metrics, and StandardScaler values without moving runtime artifacts.
@@ -267,10 +275,10 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3014/anomaly/retrain/
 If you need to run the same retrain flow without API, use:
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\retrain_from_config.py
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.retrain_from_config
 ```
 
-ทั้งสองทางจะใช้ค่าใน `config/retrain_anomaly.json` เป็น default กลาง ถ้าจะเปลี่ยน compact set, `batch_size`, หรือ heatmap mode ให้แก้ไฟล์นี้
+ทั้งสองทางจะใช้ค่าใน `config/retrain_anomaly.json` เป็น default กลาง ถ้าจะเปลี่ยน compact set, `batch_size`, หรือ heatmap mode ให้แก้ไฟล์นี้ และหลัง retrain เสร็จจะต่อ compare/report ให้อัตโนมัติ
 
 หมายเหตุเรื่อง runtime:
 
@@ -293,13 +301,13 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 ใช้คำสั่งนี้เมื่อต้องการเช็ก active model แบบเร็ว ๆ จากไฟล์ภาพเดียว โดยไม่ต้องยิงผ่าน API
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\predict_image.py "path\to\image.jpg"
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.predict_image "path\to\image.jpg"
 ```
 
 Optional JSON output:
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\predict_image.py "path\to\image.jpg" --output AnomalyDetection\outputs\sample_prediction.json
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.predict_image "path\to\image.jpg" --output AnomalyDetection\outputs\sample_prediction.json
 ```
 
 CLI นี้ใช้ logic resolve active model แบบเดียวกับ runtime API:

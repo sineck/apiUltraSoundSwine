@@ -15,6 +15,7 @@ ANOMALY_ROOT = pathInitial / "AnomalyDetection"
 TRAIN_MODULE = "AnomalyDetection.scripts.train_anomaly_models"
 REPORT_MODULE = "AnomalyDetection.scripts.generate_report"
 INDEX_MODULE = "AnomalyDetection.scripts.build_artifact_index"
+COMPARE_SCRIPT = pathInitial / "tests" / "run_validate_compare.py"
 REGISTRY_PATH = ANOMALY_ROOT / "artifacts" / "models" / "model_registry.json"
 REPORT_INDEX = ANOMALY_ROOT / "outputs" / "report" / "index.html"
 JOB_DIR = pathInitial / "logs" / "anomaly_training"
@@ -82,6 +83,7 @@ def build_training_commands(
     1. train anomaly models
     2. rebuild artifact index ถ้าถูกเปิดไว้
     3. generate report ถ้าถูกเปิดไว้
+    4. run validate compare report เพื่ออัปเดต `outputs/report/index.html`
     """
     commands = [[sys.executable, "-m", TRAIN_MODULE, "--batch-size", str(batch_size)]]
     if feature_sets:
@@ -92,6 +94,7 @@ def build_training_commands(
         commands.append([sys.executable, "-m", INDEX_MODULE])
     if generate_report:
         commands.append([sys.executable, "-m", REPORT_MODULE, "--detail-heatmaps", detail_heatmaps])
+    commands.append([sys.executable, str(COMPARE_SCRIPT), "--write-report"])
     return commands
 
 

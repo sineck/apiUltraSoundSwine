@@ -14,14 +14,16 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_EXE = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 VALIDATE_ROOT = REPO_ROOT / "AnomalyDetection" / "asset" / "validate"
-ANOMALY_SCRIPTS = REPO_ROOT / "AnomalyDetection" / "scripts"
 REPORT_DIR = REPO_ROOT / "AnomalyDetection" / "outputs" / "report"
 REPORT_HTML = REPORT_DIR / "index.html"
 REPORT_JSON = REPORT_DIR / "report_data.json"
 
-sys.path.insert(0, str(ANOMALY_SCRIPTS))
+# รันไฟล์นี้แบบ `python tests/run_validate_compare.py` จาก repo root ได้ตรง ๆ
+# โดยชี้ import root ไปที่โปรเจคก่อน แล้วค่อย import แบบ package path จริง
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from anomaly_lib import (  # noqa: E402
+from AnomalyDetection.scripts.anomaly_lib import (
     ImageRow,
     extract_patch_handcrafted,
     get_feature_matrix,

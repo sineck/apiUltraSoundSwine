@@ -93,7 +93,7 @@ def test_health_includes_version_when_db_unreachable(monkeypatch):
         "runtime_config_summary",
         lambda: {
             "config_path": "D:/apiUltraSoundSwine/config/.env",
-            "myapi_port": 3014,
+            "configured_myapi_port": 3014,
             "insert_ultrasound_to_db": False,
             "pregnancy_detect_model_v2": "anomaly",
             "yolo_model_name": "best.pt",

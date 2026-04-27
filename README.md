@@ -295,7 +295,7 @@ config/retrain_anomaly.json
   },
   "config": {
     "config_path": "D:/apiUltraSoundSwine/config/.env",
-    "myapi_port": 3014,
+    "configured_myapi_port": 3014,
     "insert_ultrasound_to_db": true,
     "pregnancy_detect_model_v2": "anomaly",
     "yolo_model_name": "best.pt",

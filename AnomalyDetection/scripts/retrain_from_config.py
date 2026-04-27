@@ -7,6 +7,7 @@ from __future__ import annotations
 การ retrain ทั้งฝั่ง script และฝั่ง API
 """
 
+import argparse
 import json
 import subprocess
 import sys
@@ -18,6 +19,22 @@ CONFIG_PATH = ROOT / "config" / "retrain_anomaly.json"
 TRAIN_MODULE = "AnomalyDetection.scripts.train_anomaly_models"
 INDEX_MODULE = "AnomalyDetection.scripts.build_artifact_index"
 REPORT_MODULE = "AnomalyDetection.scripts.generate_report"
+COMPARE_SCRIPT = ROOT / "tests" / "run_validate_compare.py"
+
+
+def parse_args() -> argparse.Namespace:
+    """อ่าน argument แบบปลอดภัย.
+
+    สคริปต์นี้ยังไม่เปิดให้ override config จาก command line แต่ต้องมี parser
+    เพื่อให้ `-h/--help` ทำงานปกติ และกันการส่ง arg แปลกแล้วเผลอรัน train จริง
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run anomaly retrain from config/retrain_anomaly.json, then refresh "
+            "artifact index, report, and validate comparison report."
+        )
+    )
+    return parser.parse_args()
 
 
 def load_config() -> dict:
@@ -32,6 +49,7 @@ def build_commands(config: dict) -> list[list[str]]:
     1. train anomaly models
     2. rebuild artifact index (ถ้าเปิด)
     3. generate report (ถ้าเปิด)
+    4. run validate compare report เพื่ออัปเดต outputs/report/index.html ชุดล่าสุด
     """
     train_command = [
         sys.executable,
@@ -60,11 +78,13 @@ def build_commands(config: dict) -> list[list[str]]:
                 str(config.get("detail_heatmaps", "active")),
             ]
         )
+    commands.append([sys.executable, str(COMPARE_SCRIPT), "--write-report"])
     return commands
 
 
 def main() -> None:
     """entrypoint ของ retrain script."""
+    parse_args()
     if not CONFIG_PATH.exists():
         raise SystemExit(f"Missing config: {CONFIG_PATH}")
 

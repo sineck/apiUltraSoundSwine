@@ -173,10 +173,14 @@ def app_metadata() -> dict:
 
 
 def runtime_config_summary() -> dict:
-    """คืน config runtime ที่ปลอดภัยสำหรับแสดงใน /health โดยไม่เปิดเผย secret."""
+    """คืน config runtime ที่ปลอดภัยสำหรับแสดงใน /health โดยไม่เปิดเผย secret.
+
+    หมายเหตุ: field port ตรงนี้เป็น "configured port" จาก runtime config ไม่ใช่
+    port ที่ process bind อยู่จริง เพราะ Uvicorn อาจถูกรันด้วย `--port` คนละค่าได้
+    """
     return {
         "config_path": str(pathInitial / "config" / ".env"),
-        "myapi_port": int(os.environ.get("MYAPI_PORT", 3014)),
+        "configured_myapi_port": int(os.environ.get("MYAPI_PORT", 3014)),
         "insert_ultrasound_to_db": should_insert_ultrasound_to_db(),
         "pregnancy_detect_model_v2": selected_pregnancy_model(),
         "yolo_model_name": os.environ.get("ModelName", "best.pt"),
