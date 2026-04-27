@@ -167,6 +167,27 @@ GEMINI_API_KEY=...
 
 ถ้าจะรันแอปตรงจาก source โดยไม่ใช้ Docker:
 
+สร้าง virtual environment ก่อน:
+
+```powershell
+python -m venv .venv
+```
+
+activate:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+แล้วติดตั้ง dependency:
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+จากนั้นค่อยรันแอป:
+
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 3014 --reload
 ```

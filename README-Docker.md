@@ -85,7 +85,26 @@ project-root/
 └── Dockerfile
 ```
 
-ถ้าใช้ virtual environment ใน repo:
+สร้าง virtual environment:
+
+```powershell
+python -m venv .venv
+```
+
+activate:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+ติดตั้ง dependency:
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+จากนั้นถ้าใช้ virtual environment ใน repo:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 3014 --reload
