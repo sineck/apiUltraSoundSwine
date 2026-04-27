@@ -282,6 +282,14 @@ Invoke-RestMethod -Method Post `
 
 ระบบจะเอาค่าที่ส่งมาทับบน default จาก `config/retrain_anomaly.json` เฉพาะ field นั้น
 
+ถ้าต้องการสลับ **anomaly model ที่มีอยู่แล้ว** โดยไม่ train ใหม่:
+
+- แก้ `active_model` ใน  
+  [D:\apiUltraSoundSwine\AnomalyDetection\artifacts\models\model_registry.json](D:\apiUltraSoundSwine\AnomalyDetection\artifacts\models\model_registry.json)
+- แล้ว restart API
+
+ถ้ารัน train/retrain ใหม่ ระบบจะเลือก active anomaly model ให้เอง แล้วอัปเดต `model_registry.json` อัตโนมัติ
+
 ## Health Response
 
 `GET /health` ตอนนี้ไม่ได้คืนแค่สถานะ DB อย่างเดียว แต่แนบ `config` summary ที่ปลอดภัยกลับมาด้วย เช่น path ของ config จริง, backend ที่ active, ชื่อ YOLO model, Gemini model, และ `max_images`

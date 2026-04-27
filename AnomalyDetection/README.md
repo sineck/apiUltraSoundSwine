@@ -226,6 +226,35 @@ AnomalyDetection/artifacts/models/model_registry.json
 
 ดังนั้น `model_registry.json` คือ source of truth ของ anomaly backend ใน runtime ปัจจุบัน ไม่ใช่ path ที่ hardcode ไว้ใน code หรือ path absolute จากเครื่อง train เดิม
 
+## สลับ active model ที่มีอยู่แล้ว
+
+ถ้าต้องการสลับไปใช้ anomaly model ตัวอื่นที่มี artifact อยู่แล้ว โดย **ไม่ต้อง train ใหม่**
+
+ให้แก้ field `active_model` ในไฟล์นี้:
+
+```text
+AnomalyDetection/artifacts/models/model_registry.json
+```
+
+ตัวอย่าง:
+
+```json
+{
+  "active_model": "20260426_141828/handcrafted__logistic_regression_balanced"
+}
+```
+
+จากนั้นให้ **restart API** เพื่อให้ runtime โหลด model active ตัวใหม่
+
+สรุป:
+
+- `config/.env`
+  - ใช้เลือกว่าจะให้ V2 ใช้ backend `anomaly`, `yolo`, หรือ `ensemble`
+- `model_registry.json`
+  - ใช้เลือกว่า anomaly backend จะโหลด **model ตัวไหน**
+
+ถ้าจะเปลี่ยนแค่ anomaly model ภายใน backend เดิม ไม่ต้องแก้ `config/.env`; แก้ `active_model` แล้ว restart API ก็พอ
+
 To generate a readable artifact map for the active run:
 
 ```powershell
@@ -259,6 +288,8 @@ If you need to run the same retrain flow without API, use:
 - route retrain นี้เป็นงาน background สำหรับอัปเดต anomaly artifacts
 - เมื่อ train สำเร็จและอัปเดต `model_registry.json` แล้ว เส้น V2 ที่ใช้ `PREGNANCY_DETECT_MODEL_V2=anomaly` จะอิง active model ตัวใหม่
 - `force=true` ตอนนี้ไม่เปิดงาน train ซ้อนกับ job ที่กำลังรันอยู่ เพื่อกัน artifact/registry ชนกัน
+- ถ้ารัน train/retrain ใหม่ ระบบจะ **เลือก active model ให้เอง** ตาม logic ใน `AnomalyDetection/scripts/train_anomaly_models.py`
+- เกณฑ์ปัจจุบันคือเลือก model ที่ดีที่สุดจากผล validation/test แล้วเขียนกลับเข้า `model_registry.json` อัตโนมัติ
 
 Check status:
 
