@@ -1,11 +1,13 @@
 
  
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware   
 
 from typing import Annotated
+import json
 import os
 import logging
 from logging.handlers import RotatingFileHandler
@@ -57,6 +59,7 @@ from app.image_naming import build_image_filename
 
 # Central runtime path used by all modules to find config, uploads, and assets.
 pathInitial = Path(__file__).resolve().parent.parent   
+RETRAIN_CONFIG_PATH = pathInitial / "config" / "retrain_anomaly.json"
 
 # Load config once at import time so Docker, local run, and tests share the same defaults.
 if pathInitial.exists() :
@@ -66,7 +69,14 @@ if pathInitial.exists() :
 max_images = int(os.getenv("Max_Images","5"))
 
 # --- FastAPI app and shared middleware ---
-app = FastAPI()
+app = FastAPI(
+    openapi_tags=[
+        {"name": "V1", "description": "เส้นใช้งานเดิมที่ยังต้องคงไว้"},
+        {"name": "V2", "description": "เส้นใหม่ที่เลือก backend ได้จาก PREGNANCY_DETECT_MODEL_V2"},
+        {"name": "Anomaly Train", "description": "งาน train/retrain anomaly model และเช็กสถานะ"},
+        {"name": "System", "description": "เส้นระบบสำหรับตรวจ version และ health"},
+    ]
+)
 
 # --- Add CORS Middleware ---
 cors_origins = [
@@ -110,6 +120,44 @@ app_log.setLevel(logging.INFO)
 app_log.addHandler(my_handler)
 
 
+def patch_openapi_file_schema(schema: dict) -> None:
+    """แปลง schema file upload ให้ Swagger UI แสดงเป็น file picker ได้ถูกต้อง."""
+    if not isinstance(schema, dict):
+        return
+
+    if schema.get("type") == "string" and "contentMediaType" in schema:
+        schema["format"] = "binary"
+        schema.pop("contentMediaType", None)
+
+    for value in schema.values():
+        if isinstance(value, dict):
+            patch_openapi_file_schema(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    patch_openapi_file_schema(item)
+
+
+def custom_openapi():
+    """ปรับ OpenAPI หลัง generate เพื่อให้ Swagger docs ของ file upload อ่านง่ายและใช้งานได้."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        routes=app.routes,
+        description=app.description,
+        tags=app.openapi_tags,
+    )
+    patch_openapi_file_schema(openapi_schema)
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
+
 def image_to_base64(image: np.ndarray) -> str:
     """แปลงภาพ OpenCV เป็น data URL เพื่อใช้แสดงผลหรือ debug ในหน้าเว็บ."""
     _, buffer = cv2.imencode('.jpg', image)
@@ -124,14 +172,34 @@ def app_metadata() -> dict:
     }
 
 
+def runtime_config_summary() -> dict:
+    """คืน config runtime ที่ปลอดภัยสำหรับแสดงใน /health โดยไม่เปิดเผย secret."""
+    return {
+        "config_path": str(pathInitial / "config" / ".env"),
+        "myapi_port": int(os.environ.get("MYAPI_PORT", 3014)),
+        "insert_ultrasound_to_db": should_insert_ultrasound_to_db(),
+        "pregnancy_detect_model_v2": selected_pregnancy_model(),
+        "yolo_model_name": os.environ.get("ModelName", "best.pt"),
+        "gemini_model": os.environ.get("MODEL_GEMINI", "gemini-3-flash-preview"),
+        "max_images": max_images,
+    }
+
+
 @app.get("/", include_in_schema=False)
 async def root_redirect():
     return RedirectResponse(url="/docs")
 
 
+@dataclass(frozen=True)
+class UltrasoundPrecheckResult:
+    """ผล precheck สำหรับกันภาพนอกโดเมนก่อนส่งเข้า V2 backend."""
+    is_ultrasound: bool
+    reason: str
+
+
 def reload_runtime_config() -> None:
-    """reload ค่า .env ปัจจุบัน เพื่อให้ route ใช้ config ล่าสุดจากไฟล์จริง."""
-    load_dotenv(dotenv_path=str(pathInitial / "config" / ".env"), override=True)
+    """คงไว้เพื่อ compatibility แต่ไม่ทับ process env ระหว่าง request อีกแล้ว."""
+    return None
 
 
 def anomaly_error_result(path_images: str, error_remark: str) -> ImageResult:
@@ -143,6 +211,53 @@ def anomaly_error_result(path_images: str, error_remark: str) -> ImageResult:
         number_of_fetus=0,
         error_remark=error_remark,
     )
+
+
+def ultrasound_unknown_result(path_images: str, error_remark: str) -> ImageResult:
+    """สร้างผล unknown สำหรับภาพที่ไม่ผ่าน precheck ว่าไม่ใช่ ultrasound."""
+    return ImageResult(
+        path_images=path_images,
+        result="unknown",
+        confidence=0.0,
+        number_of_fetus=0,
+        error_remark=error_remark,
+    )
+
+
+def precheck_ultrasound_image(img_cv2: np.ndarray) -> UltrasoundPrecheckResult:
+    """กรองภาพนอกโดเมนด้วยกติกาง่าย ๆ: low-color, โทนมืด/เทา, edge ไม่ฟุ้งแบบภาพธรรมชาติ."""
+    if img_cv2 is None or img_cv2.size == 0:
+        return UltrasoundPrecheckResult(False, "Input image is empty")
+
+    if len(img_cv2.shape) == 2:
+        gray = img_cv2
+        color_complexity = 0.0
+    else:
+        blue = img_cv2[:, :, 0].astype(np.float32)
+        green = img_cv2[:, :, 1].astype(np.float32)
+        red = img_cv2[:, :, 2].astype(np.float32)
+        color_complexity = float(np.mean(np.abs(blue - green) + np.abs(green - red) + np.abs(blue - red)) / 3.0)
+        gray = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2GRAY)
+
+    dark_gray_ratio = float(np.count_nonzero(gray <= 185) / gray.size)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 60, 140)
+    edge_density = float(np.count_nonzero(edges) / edges.size)
+
+    failed_checks = []
+    if color_complexity > 5.0:
+        failed_checks.append(f"color_complexity={color_complexity:.2f}>5.00")
+    if dark_gray_ratio < 0.86:
+        failed_checks.append(f"dark_gray_ratio={dark_gray_ratio:.2f}<0.86")
+    if edge_density > 0.05:
+        failed_checks.append(f"edge_density={edge_density:.2f}>0.05")
+
+    if failed_checks:
+        return UltrasoundPrecheckResult(
+            False,
+            "Input is not recognized as an ultrasound image: " + ", ".join(failed_checks),
+        )
+    return UltrasoundPrecheckResult(True, "")
 
 
 def legacy_pdf_ai_label_from_result(result_text: str) -> str:
@@ -175,29 +290,68 @@ class PregnancyDetectionOutcome:
     legacy_ai_label: str
 
 
+def detect_saved_yolo_image(display_name: str, save_path: str) -> PregnancyDetectionOutcome:
+    """รัน YOLO backend แล้ว normalize ผลให้อยู่ใน outcome กลางเดียวกับ anomaly."""
+    result_name, confidence = preprocess_yolo(save_path)
+    app_log.info("[PREGNANCY YOLO] %s -> %s confidence=%s", display_name, result_name, confidence)
+    result = format_yolo_pregnancy_result(display_name, save_path, result_name, confidence)
+    legacy_ai_label = result_name or legacy_pdf_ai_label_from_result(result.result)
+    return PregnancyDetectionOutcome(result=result, legacy_ai_label=legacy_ai_label)
+
+
+def detect_saved_ensemble_image(display_name: str, save_path: str) -> PregnancyDetectionOutcome:
+    """ใช้ anomaly + YOLO ร่วมกัน โดยถือ pregnant เฉพาะเมื่อทั้งสองฝั่งตรงกันว่า pregnant."""
+    anomaly_result = detect_saved_anomaly_image(display_name, save_path)
+    yolo_outcome = detect_saved_yolo_image(display_name, save_path)
+
+    if anomaly_result.result == "error":
+        return PregnancyDetectionOutcome(
+            result=anomaly_result,
+            legacy_ai_label=legacy_pdf_ai_label_from_result(anomaly_result.result),
+        )
+    if yolo_outcome.result.result == "error":
+        return yolo_outcome
+
+    final_result = "no pregnant"
+    legacy_ai_label = "2_NoPrenant_or_NotSure"
+    confidence = max(float(anomaly_result.confidence or 0.0), float(yolo_outcome.result.confidence or 0.0))
+
+    if anomaly_result.result == "pregnant" and yolo_outcome.result.result == "pregnant":
+        final_result = "pregnant"
+        legacy_ai_label = "1_Pregnant"
+        confidence = min(float(anomaly_result.confidence or 0.0), float(yolo_outcome.result.confidence or 0.0))
+
+    return PregnancyDetectionOutcome(
+        result=ImageResult(
+            path_images=save_path,
+            result=final_result,
+            confidence=round(confidence, 2),
+            number_of_fetus=0,
+            error_remark="",
+        ),
+        legacy_ai_label=legacy_ai_label,
+    )
+
+
 def detect_saved_pregnancy_image_with_backend(display_name: str, save_path: str) -> PregnancyDetectionOutcome:
     """เลือก backend จาก config แล้วรวมผลให้อยู่รูปกลางเดียวก่อนส่งต่อไป response/DB."""
     backend = selected_pregnancy_model()
-    result: ImageResult
-    legacy_ai_label: str
 
     if backend in {"anomaly", "new"}:
         result = detect_saved_anomaly_image(display_name, save_path)
-        legacy_ai_label = legacy_pdf_ai_label_from_result(result.result)
-    elif backend in {"yolo", "old", "legacy"}:
-        result_name, confidence = preprocess_yolo(save_path)
-        app_log.info("[PREGNANCY YOLO] %s -> %s confidence=%s", display_name, result_name, confidence)
-        result = format_yolo_pregnancy_result(display_name, save_path, result_name, confidence)
-        legacy_ai_label = result_name or legacy_pdf_ai_label_from_result(result.result)
-    else:
-        raise ValueError("PREGNANCY_DETECT_MODEL_V2 must be anomaly or yolo")
-
-    return PregnancyDetectionOutcome(result=result, legacy_ai_label=legacy_ai_label)
+        return PregnancyDetectionOutcome(
+            result=result,
+            legacy_ai_label=legacy_pdf_ai_label_from_result(result.result),
+        )
+    if backend in {"yolo", "old", "legacy"}:
+        return detect_saved_yolo_image(display_name, save_path)
+    if backend == "ensemble":
+        return detect_saved_ensemble_image(display_name, save_path)
+    raise ValueError("PREGNANCY_DETECT_MODEL_V2 must be anomaly, yolo, or ensemble")
 
 
 def selected_pregnancy_model() -> str:
     """อ่าน backend ที่ active จริงจาก config runtime."""
-    reload_runtime_config()
     return os.getenv("PREGNANCY_DETECT_MODEL_V2", "anomaly").strip().lower()
 
 
@@ -222,6 +376,32 @@ def format_yolo_pregnancy_result(display_name: str, save_path: str, result_name:
 def detect_saved_pregnancy_image(display_name: str, save_path: str) -> ImageResult:
     """compat helper สำหรับจุดที่ต้องการแค่ ImageResult โดยไม่ต้องยุ่งกับ label ฝั่ง DB."""
     return detect_saved_pregnancy_image_with_backend(display_name, save_path).result
+
+
+def annotate_pregnant_detection_with_gemini(
+    filename: str,
+    img_cv2: np.ndarray,
+    outcome: PregnancyDetectionOutcome,
+) -> ImageResult:
+    """ใช้ Gemini วงรูปเฉพาะภาพที่ gate ว่า pregnant และบันทึกไฟล์ไว้ path เดียวกับ /detect_follicle/."""
+    if outcome.result.result != "pregnant":
+        return outcome.result
+
+    annotated_result = ImageResult(**outcome.result.model_dump())
+    try:
+        ai = analyze_ultrasound_core(img_cv2)
+        gemini_status = ai.get("status", "")
+        gemini_sac_count = int(ai.get("sac_count", 0) or 0)
+        if gemini_status == "1_Pregnant" and gemini_sac_count > 0:
+            save_path = save_annotation_result(ai["annotated_img"], filename)
+            annotated_result.path_images = save_path
+            annotated_result.number_of_fetus = gemini_sac_count
+        else:
+            annotated_result.error_remark = "Gemini did not return usable follicle annotation"
+    except Exception as gemini_error:
+        app_log.error("[V2 FOLLICLE ERROR] %s: %s", filename, gemini_error)
+        annotated_result.error_remark = f"Gemini annotate failed: {gemini_error}"
+    return annotated_result
 
 
 def build_ultrasound_db_payload(
@@ -302,6 +482,15 @@ class AnomalyTrainRequest(BaseModel):
     force: bool = False
 
 
+def load_retrain_anomaly_config() -> AnomalyTrainRequest:
+    """โหลดค่า default ของ retrain จากไฟล์ JSON ฝั่ง runtime."""
+    if not RETRAIN_CONFIG_PATH.exists():
+        raise FileNotFoundError(f"Missing retrain config: {RETRAIN_CONFIG_PATH}")
+    with RETRAIN_CONFIG_PATH.open("r", encoding="utf-8") as file:
+        payload = json.load(file)
+    return AnomalyTrainRequest.model_validate(payload)
+
+
 def save_pdf_page_asset(crop_img: Image.Image, page_number: int) -> str:
     # บันทึกรูปที่ตัดจาก PDF ลง asset เพื่อให้ V2 PDF flow เก็บผลลัพธ์แบบเดียวกับสายเดิม
     out_name = build_image_filename("pdf", page_number=page_number)
@@ -367,7 +556,7 @@ def process_v2_pdf_upload(pdf_path: Path, source_name: str) -> tuple[bool, str |
         return False, str(exc)
 
 # --- HTML Form Endpoint ---
-@app.get("/upload_form", response_class=HTMLResponse)
+@app.get("/upload_form", response_class=HTMLResponse, tags=["V1"])
 async def upload_form():
     """แสดงหน้าเว็บสำหรับอัปโหลดไฟล์ PDF"""
     return """
@@ -392,7 +581,7 @@ async def upload_form():
     "/upload_pdf/",
     summary="Upload PDF File",
     description="อัปโหลดไฟล์ PDF เพื่อแปลงเป็น PNG",
-    tags=["PDF"],
+    tags=["V1"],
 )
 async def upload_pdf(
     file: Annotated[
@@ -450,7 +639,7 @@ async def upload_pdf(
 @app.post("/detect_follicle/", 
           summary="Detect ถุงน้ำคร่ำ",
           description="เลือกภาพที่สกัดจาก PDF file มาตรวจหาตำแหน่งถุงน้ำคร่ำ",
-          tags=["Detection"])
+          tags=["V1"])
 async def detect_follicle_api(
     files: List[UploadFile] = File(description="ภาพ Ultrasound สำหรับ Detect ถุงน้ำคร่ำ"),
 ):
@@ -537,7 +726,7 @@ async def detect_follicle_api(
     "/v2/upload_pdf/",
     summary="Upload PDF and detect pregnancy",
     description="V2 ของ /upload_pdf/: รับ PDF เหมือนเดิม เลือก backend จาก PREGNANCY_DETECT_MODEL_V2 แล้วตอบแบบ legacy route เดิม",
-    tags=["PDF"],
+    tags=["V2"],
 )
 async def upload_pdf_v2_api(
     file: UploadFile = File(description="ไฟล์ PDF Ultrasound สำหรับ pregnancy model"),
@@ -577,7 +766,7 @@ async def upload_pdf_v2_api(
     "/v2/detection_pig",
     summary="Detect pregnancy from images with configurable model",
     description="รับรูป ultrasound หลายรูป แล้วเลือก backend จาก PREGNANCY_DETECT_MODEL_V2 โดยคืน response shape แบบเดียวกับ /detect_follicle/",
-    tags=["Detection"],
+    tags=["V2"],
 )
 async def detect_pig_v2_api(
     files: List[UploadFile] = File(description="ภาพ Ultrasound สำหรับ pregnancy model"),
@@ -598,6 +787,11 @@ async def detect_pig_v2_api(
             if img_cv2 is None:
                 results.append(anomaly_error_result(filename, "อ่านไฟล์ภาพไม่ได้"))
                 continue
+            precheck = precheck_ultrasound_image(img_cv2)
+            if not precheck.is_ultrasound:
+                unknown_path = save_detection_input(img_cv2, filename, kind="unknown")
+                results.append(ultrasound_unknown_result(unknown_path, precheck.reason))
+                continue
 
             # บันทึกรูปที่อัปโหลดไว้ก่อน เพื่อให้ทั้ง yolo/anomaly ใช้ path เดียวกัน
             save_path = save_detection_input(img_cv2, filename)
@@ -613,15 +807,63 @@ async def detect_pig_v2_api(
         results=results,
     )
 
+
+@app.post(
+    "/v2/detection_pig_follicle",
+    summary="Detect pregnancy from images and annotate follicle when pregnant",
+    description="ใช้ model gate แบบเดียวกับ /v2/detection_pig ก่อน ถ้าผลเป็น pregnant ค่อยเรียก Gemini ให้วงรูป และบันทึก path เดียวกับ /detect_follicle/",
+    tags=["V2"],
+)
+async def detect_pig_follicle_v2_api(
+    files: List[UploadFile] = File(description="ภาพ Ultrasound สำหรับ pregnancy model และ Gemini annotation"),
+):
+    # V2 วงรูป: ใช้ model gate ก่อนเพื่อคัดภาพที่ควรถาม Gemini ต่อและเก็บ path ลง detections แบบ route เดิม
+    if len(files) > max_images:
+        raise HTTPException(
+            status_code=400,
+            detail=f"อัปโหลดได้สูงสุด {max_images} รูปต่อครั้ง (ส่งมา {len(files)} รูป)"
+        )
+
+    results = []
+    for file in files:
+        filename = file.filename or "upload_image"
+        try:
+            contents = await file.read()
+            img_cv2 = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+            if img_cv2 is None:
+                results.append(anomaly_error_result(filename, "อ่านไฟล์ภาพไม่ได้"))
+                continue
+            precheck = precheck_ultrasound_image(img_cv2)
+            if not precheck.is_ultrasound:
+                unknown_path = save_detection_input(img_cv2, filename, kind="unknown")
+                results.append(ultrasound_unknown_result(unknown_path, precheck.reason))
+                continue
+
+            save_path = save_detection_input(img_cv2, filename)
+            outcome = detect_saved_pregnancy_image_with_backend(filename, save_path)
+            annotated_result = annotate_pregnant_detection_with_gemini(filename, img_cv2, outcome)
+            results.append(annotated_result)
+        except Exception as e:
+            app_log.error(f"[V2 DETECTION PIG FOLLICLE ERROR] {filename}: {e}")
+            results.append(anomaly_error_result(filename, str(e)))
+
+    return DetectionRespone(
+        main_results="success",
+        error_massage="",
+        results=results,
+    )
+
 @app.post(
     "/anomaly/retrain/",
     summary="Train new anomaly pregnancy model",
     description="เริ่ม train anomaly model ใหม่แบบ background แล้ว optionally สร้าง index/report ใหม่",
-    tags=["Anomaly Training"],
+    tags=["Anomaly Train"],
     status_code=202,
 )
 async def retrain_anomaly_api(request: AnomalyTrainRequest | None = None):
-    payload = request or AnomalyTrainRequest()
+    payload = load_retrain_anomaly_config()
+    if request is not None:
+        payload = payload.model_copy(update=request.model_dump(exclude_unset=True))
     try:
         job = start_anomaly_training(
             feature_sets=payload.feature_sets,
@@ -648,13 +890,13 @@ async def retrain_anomaly_api(request: AnomalyTrainRequest | None = None):
 @app.get(
     "/anomaly/retrain/status/",
     summary="Check anomaly training job status",
-    tags=["Anomaly Training"],
+    tags=["Anomaly Train"],
 )
 async def retrain_anomaly_status_api():
     return current_anomaly_training_job()
 
 
-@app.get("/detect_form", response_class=HTMLResponse, tags=["Detection"])
+@app.get("/detect_form", response_class=HTMLResponse, tags=["V1"])
 async def detect_form():
     """หน้า Web สำหรับ Upload ภาพ Ultrasound หลายไฟล์พร้อมกัน"""
     return f"""
@@ -704,6 +946,7 @@ def version_check():
 @app.get("/health", tags=["System"])
 def health_check():
     # Health is intentionally DB-aware: API is healthy only when MySQL accepts SELECT 1.
+    config_summary = runtime_config_summary()
     host = os.environ.get("MYSQL_HOST", "invalidhost")
     port = int(os.environ.get("MYSQL_PORT", 3306))
     user = os.environ.get("MYSQL_USER", "root")
@@ -725,12 +968,12 @@ def health_check():
                 cursor.fetchone()
         finally:
             conn.close()
-        return {"status": "ok", "db": "connected", "app": app_metadata()}
+        return {"status": "ok", "db": "connected", "app": app_metadata(), "config": config_summary}
     except Exception as e:
         app_log.error(f"[HEALTHCHECK] DB connect error: {e}")
         return JSONResponse(
             status_code=503,
-            content={"status": "error", "db": "unreachable", "detail": str(e), "app": app_metadata()},
+            content={"status": "error", "db": "unreachable", "detail": str(e), "app": app_metadata(), "config": config_summary},
         )
 
 if __name__ == "__main__":

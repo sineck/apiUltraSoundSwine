@@ -32,12 +32,13 @@ RUN groupadd --system appuser && \
 
 # Copy requirements first for better caching
 COPY requirements.txt .
-COPY requirements-docker.txt .
 
-# Install CPU-only PyTorch first so Docker images do not pull CUDA runtime packages.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision && \
-    pip install --no-cache-dir -r requirements-docker.txt && \
-    pip install --no-cache-dir --no-deps ultralytics
+# Install from the single requirements source.
+# Docker still keeps `ultralytics` on a no-deps path so the image does not pull extra GUI/OpenCV stacks.
+RUN python -c "from pathlib import Path; lines = Path('requirements.txt').read_text(encoding='utf-8').splitlines(); Path('/tmp/requirements-docker.txt').write_text('\n'.join(line for line in lines if line.strip() and line.strip() != 'ultralytics') + '\n', encoding='utf-8')" && \
+    pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r /tmp/requirements-docker.txt && \
+    pip install --no-cache-dir --no-deps ultralytics && \
+    rm -f /tmp/requirements-docker.txt
 
 # Preload optional deep feature weights used by AnomalyDetection artifacts.
 # Without these caches, future dinov2/resnet18 active models need network on first use.

@@ -60,11 +60,52 @@ project-root/
 
 โปรเจคนี้แยกการใช้งานเป็น 3 วิธี:
 
+- **วิธี Local: รันตรงด้วย Uvicorn** ใช้เมื่อจะ debug หรือพัฒนา API จาก source โดยไม่ผ่าน Docker
 - **วิธี A: Clone โปรเจคมาทำงานต่อ** ใช้เมื่อจะเข้ามาอ่านโค้ด, แก้โค้ด, รัน test, หรือเตรียม build image ใหม่จาก source
 - **วิธี B1: สร้าง Image** ใช้เมื่อมี source code ครบและต้องการ build image จาก `Dockerfile`
 - **วิธี B2: Image Transfer** ใช้เมื่อมี image ที่ build แล้วและต้องการเอาไปรันอีกเครื่อง โดยไม่ build ใหม่
 
 ทุกวิธีที่รัน container ต้องมี `config/.env` เพราะเป็น runtime configuration จริง. `config/.env.example` เป็น template เท่านั้น.
+
+### วิธี Local: รันตรงด้วย Uvicorn
+
+ใช้วิธีนี้เมื่อจะ debug หรือพัฒนา API จาก source โดยไม่ผ่าน Docker
+
+สิ่งที่ต้องมี:
+
+```text
+project-root/
+├── app/
+├── AnomalyDetection/
+├── config/
+│   ├── .env
+│   └── .env.example
+├── model/
+├── requirements.txt
+└── Dockerfile
+```
+
+ถ้าใช้ virtual environment ใน repo:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 3014 --reload
+```
+
+ถ้าไม่ต้องการ `--reload`:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 3014
+```
+
+หมายเหตุ:
+- route จะอ่าน config จาก `config/.env` โดยตรง
+- ถ้าจะเปลี่ยน port ให้แก้ `MYAPI_PORT` ใน `config/.env` และเปลี่ยน `--port` ให้ตรงกัน
+- ถ้าเปิด `INSERT_ULTRASOUND_TO_DB=true` การยิง route ที่เกี่ยวกับ PDF/Detection จะเขียน DB จริง
+- ถ้าจะ smoke test แบบไม่ลง DB ให้ตั้ง:
+
+```env
+INSERT_ULTRASOUND_TO_DB=false
+```
 
 ### วิธี A: Clone โปรเจคมาทำงานต่อ
 
@@ -98,7 +139,7 @@ project-root/
 │   └── best_finetune_YOLO26-cls_Ver2_20260424.pt
 ├── Dockerfile
 ├── docker-compose.yml
-└── requirements-docker.txt
+└── requirements.txt
 ```
 
 คำสั่งเดียวสำหรับ build และ run:
@@ -153,6 +194,7 @@ docker compose -f docker-compose.image.yml --env-file config/.env up -d
 - **API ตรวจรูปหมูด้วย pregnancy model**: `POST http://localhost:${MYAPI_PORT}/v2/detection_pig`
 - **ดูชื่อและเวอร์ชันแอป**: `http://localhost:${MYAPI_PORT}/version`
 - **ตรวจสุขภาพ API + MySQL**: `http://localhost:${MYAPI_PORT}/health`
+- **ดู OpenAPI schema**: `http://localhost:${MYAPI_PORT}/openapi.json`
 - **ดู Log การทำงาน**:
   ```bash
   docker compose logs -f api
@@ -192,7 +234,7 @@ docker load -i apiultrasoundswine-api.tar
 ## Health และ Version
 
 - `GET /version`: เช็กชื่อและเวอร์ชันแอปอย่างเดียว ไม่แตะ MySQL เหมาะสำหรับดูว่า container ที่รันอยู่เป็น release ไหน
-- `GET /health`: เช็ก MySQL ด้วย และแนบข้อมูล `app.name` / `app.version` กลับมาใน response
+- `GET /health`: เช็ก MySQL ด้วย และแนบข้อมูล `app.name` / `app.version` พร้อม `config` summary ที่ปลอดภัยกลับมาใน response
 - เวอร์ชันถูกกำหนดใน `app/version.py` ไม่ใช่ `.env` เพราะเป็นข้อมูลของ code/release
 
 ตัวอย่าง:
@@ -282,6 +324,13 @@ INSERT_ULTRASOUND_TO_DB=false
   ```
   ค่าที่คาดหวังคือ response shape แบบ `/detect_follicle/` และ `main_results` ต้องเป็น `success`
 
+- **V2 รูป + follicle annotate**
+  - route นี้ต้องใช้ Gemini และจะ annotate เฉพาะภาพที่ pregnancy gate ให้ผลเป็น `pregnant`
+  - ถ้าจะทดสอบ route นี้จริง ต้องเตรียม `GEMINI_API_KEY` ใน `config/.env`
+  ```powershell
+  curl -X POST "http://127.0.0.1:3014/v2/detection_pig_follicle" -F "files=@tests/mock_data/sample_input.png;type=image/png"
+  ```
+
 เมื่อ `INSERT_ULTRASOUND_TO_DB=false`:
 
 - V1 `/upload_pdf/` ต้องแปลง PDF และเขียนไฟล์ output ได้ตามปกติ
@@ -298,6 +347,7 @@ Runtime ปัจจุบันเหลือ 2 รุ่นหลัก:
 - `POST /upload_pdf/` คือ V1 เดิมของระบบ รับ field `file` สำหรับ PDF หนึ่งไฟล์ แล้ววิ่งเข้า pipeline `convert_pdf_to_png()` ตามเดิม โดยใช้ env `INSERT_ULTRASOUND_TO_DB` คุมว่าจะเขียน DB หรือไม่
 - `POST /v2/upload_pdf/` คือ V2 ฝั่ง PDF รับ field `file` สำหรับ PDF หนึ่งไฟล์ เหมือน `/upload_pdf/` เดิม แต่เลือก backend จาก `PREGNANCY_DETECT_MODEL_V2`, insert DB แบบ PDF flow เดิม, และตอบ legacy shape `{"status":"complete"}` หรือ `{"status":"error"}`
 - `POST /v2/detection_pig` คือ V2 ฝั่งรูป รับ field `files` สำหรับไฟล์รูปหลายไฟล์ แล้วเลือก backend จาก `PREGNANCY_DETECT_MODEL_V2` โดยคืน JSON แบบเดียวกับ `/detect_follicle/`
+- `POST /v2/detection_pig_follicle` คือ V2 ฝั่งรูปที่ใช้ pregnancy model เป็น gate ก่อน แล้วค่อยเรียก Gemini annotation เฉพาะรายการที่ gate เป็น `pregnant`
 
 `/v2/detection_pig` ทำงานได้ทั้ง backend `anomaly` และ `yolo` และคืน JSON shape เดียวกันเสมอ:
 
@@ -329,7 +379,14 @@ PREGNANCY_DETECT_MODEL_V2=anomaly
 
 ถ้าตั้ง `PREGNANCY_DETECT_MODEL_V2=yolo` จะใช้โมเดลเก่าใน `model/` ตามค่า `ModelName` และ threshold จาก `Min_Score_th`.
 
+ถ้าตั้ง `PREGNANCY_DETECT_MODEL_V2=ensemble` จะใช้ anomaly + YOLO ร่วมกัน:
+- ทั้ง anomaly และ YOLO ต้องตอบ `pregnant` พร้อมกัน จึงถือว่า final result เป็น `pregnant`
+- ถ้าไม่ตรงกัน หรือมีฝั่งใดไม่ใช่ `pregnant` จะถือเป็น `no pregnant`
+- YOLO ฝั่ง ensemble จะใช้ weight จาก `ModelName` โดยตรง ดังนั้นถ้าจะจับคู่กับรุ่น finetune ให้ตั้ง `ModelName=best_finetune_YOLO26-cls_Ver2_20260424.pt`
+
 ถ้า `INSERT_ULTRASOUND_TO_DB=true` เส้น V1 `/upload_pdf/`, V2 `/v2/upload_pdf/`, และ V2 `/v2/detection_pig` จะ insert ผลลงตารางเดียวกับ PDF flow เดิม (`UltraSoudPigAI`) ต่อรายการ. สำหรับ V2 ทั้งสองเส้น ค่า `results_ai` จะถูก normalize ให้เป็น legacy label เดียวกันเสมอ (`1_Pregnant` หรือ `2_NoPrenant_or_NotSure`) ไม่ว่าจะใช้ backend `yolo` หรือ `anomaly`; ส่วนรูปที่แยกจาก PDF จะถูกเก็บไว้ใต้ `app/asset/`.
+
+`/v2/detection_pig_follicle` ไม่ใช่ route insert DB. route นี้เน้นคืนผล gate + Gemini annotation path กลับมาให้ client ใช้งานต่อ
 
 หมายเหตุ: transition routes เดิม เช่น `/detect_pregnancy_pdf/`, `/detect_anomaly_pdf/`, `/detect_pregnancy_pic/`, และ `/detect_anomaly_pic/` ถูกถอดออกแล้ว เพื่อให้ runtime เหลือเฉพาะ V1 กับ V2 ที่ใช้งานจริง.
 
@@ -367,10 +424,10 @@ docker build --build-arg BAKE_DINOV2_WEIGHTS=false --build-arg BAKE_RESNET18_WEI
 
 ## Docker Image Size
 
-Dockerfile ใช้ `requirements-docker.txt` แยกจาก `requirements.txt` เพื่อลด dependency ใน image:
+ตอนนี้ repo ใช้ `requirements.txt` ไฟล์เดียวทั้ง local และ Docker:
 
 - ติดตั้ง PyTorch แบบ CPU-only จาก `https://download.pytorch.org/whl/cpu`
-- ติดตั้ง `ultralytics` แบบ `--no-deps` เพื่อไม่ดึง `opencv-python` ตัวเต็มและ `polars`
+- Docker build จะอ่านจาก `requirements.txt` ไฟล์เดียว แต่กรอง `ultralytics` ออกไปติดตั้งแบบ `--no-deps` แยก เพื่อไม่ดึง `opencv-python` ตัวเต็มและ dependency GUI เกินจำเป็น
 - ใช้ `opencv-python-headless` ชุดเดียวสำหรับ API runtime
 - ใช้ Python stdlib สำหรับ Docker healthcheck แทน `curl`
 - ไม่ copy `config/.env` เข้า image
@@ -418,6 +475,7 @@ volumes:
 - **`./app/uploads:/app/app/uploads`**: ไฟล์ PDF ที่อัปโหลดเข้าไปใน Container จะถูกบันทึกไว้ที่โฟลเดอร์ `app/uploads` ในโปรเจคของคุณด้วย
 - **`./app/asset:/app/app/asset`**: ไฟล์รูปภาพ PNG ที่ถูกแปลง จะถูกบันทึกไว้ที่ `app/asset` ในโปรเจคของคุณ
 - **`./app/detections:/app/app/detections`**: รูป annotated จาก `/detect_follicle/` จะถูกบันทึกกลับออกมาที่ host
+- route `/v2/detection_pig_follicle` ก็ใช้ output path ใต้ `app/detections/` ชุดเดียวกัน เมื่อ Gemini คืน annotation ที่ใช้งานได้
 - ไม่ mount `model/`, `AnomalyDetection/artifacts/models/`, หรือ `logs/` ใน compose ปัจจุบัน. Model อยู่ใน image; log อยู่ใน container และดูผ่าน `docker compose logs -f api`.
 
 ### หมายเหตุ

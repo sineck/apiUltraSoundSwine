@@ -75,12 +75,32 @@ def test_root_redirects_to_docs():
     assert response.headers["location"] == "/docs"
 
 
+def test_selected_pregnancy_model_uses_process_env_directly(monkeypatch):
+    monkeypatch.setenv("PREGNANCY_DETECT_MODEL_V2", "yolo")
+    monkeypatch.setattr(main, "reload_runtime_config", lambda: (_ for _ in ()).throw(AssertionError("should not reload .env during request")))
+
+    assert main.selected_pregnancy_model() == "yolo"
+
+
 def test_health_includes_version_when_db_unreachable(monkeypatch):
     def fail_connect(**kwargs):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(main, "APP_NAME", "test-api")
     monkeypatch.setattr(main, "APP_VERSION", "9.9.9")
+    monkeypatch.setattr(
+        main,
+        "runtime_config_summary",
+        lambda: {
+            "config_path": "D:/apiUltraSoundSwine/config/.env",
+            "myapi_port": 3014,
+            "insert_ultrasound_to_db": False,
+            "pregnancy_detect_model_v2": "anomaly",
+            "yolo_model_name": "best.pt",
+            "gemini_model": "gemini-3-flash-preview",
+            "max_images": 5,
+        },
+    )
     monkeypatch.setattr(main.pymysql, "connect", fail_connect)
     client = TestClient(main.app)
 
@@ -91,6 +111,10 @@ def test_health_includes_version_when_db_unreachable(monkeypatch):
     assert payload["status"] == "error"
     assert payload["db"] == "unreachable"
     assert payload["app"] == {"name": "test-api", "version": "9.9.9"}
+    assert payload["config"]["pregnancy_detect_model_v2"] == "anomaly"
+    assert payload["config"]["insert_ultrasound_to_db"] is False
+    assert "MYSQL_PASSWORD" not in response.text
+    assert "mysql_host" not in payload["config"]
 
 
 def test_detect_follicle_rejects_more_than_configured_max_images(monkeypatch):
@@ -259,6 +283,111 @@ def test_v2_detection_pig_can_use_legacy_yolo_backend(monkeypatch, tmp_path):
     assert item["error_remark"] == ""
 
 
+def test_detect_saved_pregnancy_image_with_backend_supports_ensemble_pregnant(monkeypatch):
+    monkeypatch.setenv("PREGNANCY_DETECT_MODEL_V2", "ensemble")
+    monkeypatch.setattr(
+        main,
+        "detect_saved_anomaly_image",
+        lambda display_name, save_path: main.ImageResult(
+            path_images=save_path,
+            result="pregnant",
+            confidence=0.92,
+            number_of_fetus=0,
+            error_remark="",
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "detect_saved_yolo_image",
+        lambda display_name, save_path: main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="pregnant",
+                confidence=0.81,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="1_Pregnant",
+        ),
+    )
+
+    outcome = main.detect_saved_pregnancy_image_with_backend("scan.png", "saved_scan.png")
+
+    assert outcome.result.result == "pregnant"
+    assert outcome.result.confidence == 0.81
+    assert outcome.legacy_ai_label == "1_Pregnant"
+
+
+def test_detect_saved_pregnancy_image_with_backend_supports_ensemble_no_pregnant_on_disagreement(monkeypatch):
+    monkeypatch.setenv("PREGNANCY_DETECT_MODEL_V2", "ensemble")
+    monkeypatch.setattr(
+        main,
+        "detect_saved_anomaly_image",
+        lambda display_name, save_path: main.ImageResult(
+            path_images=save_path,
+            result="pregnant",
+            confidence=0.92,
+            number_of_fetus=0,
+            error_remark="",
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "detect_saved_yolo_image",
+        lambda display_name, save_path: main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="not sure",
+                confidence=0.6,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="Unknown",
+        ),
+    )
+
+    outcome = main.detect_saved_pregnancy_image_with_backend("scan.png", "saved_scan.png")
+
+    assert outcome.result.result == "no pregnant"
+    assert outcome.result.confidence == 0.92
+    assert outcome.legacy_ai_label == "2_NoPrenant_or_NotSure"
+
+
+def test_detect_saved_pregnancy_image_with_backend_supports_ensemble_error_passthrough(monkeypatch):
+    monkeypatch.setenv("PREGNANCY_DETECT_MODEL_V2", "ensemble")
+    monkeypatch.setattr(
+        main,
+        "detect_saved_anomaly_image",
+        lambda display_name, save_path: main.ImageResult(
+            path_images=save_path,
+            result="error",
+            confidence=0.0,
+            number_of_fetus=0,
+            error_remark="anomaly failed",
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "detect_saved_yolo_image",
+        lambda display_name, save_path: main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="pregnant",
+                confidence=0.9,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="1_Pregnant",
+        ),
+    )
+
+    outcome = main.detect_saved_pregnancy_image_with_backend("scan.png", "saved_scan.png")
+
+    assert outcome.result.result == "error"
+    assert outcome.result.error_remark == "anomaly failed"
+    assert outcome.legacy_ai_label == "2_NoPrenant_or_NotSure"
+
+
 def test_v2_detection_pig_inserts_db_when_enabled(monkeypatch, tmp_path):
     calls = {}
 
@@ -377,6 +506,270 @@ def test_v2_detection_pig_rejects_more_than_configured_max_images(monkeypatch):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "อัปโหลดได้สูงสุด 1 รูปต่อครั้ง (ส่งมา 2 รูป)"
+
+
+def test_precheck_ultrasound_image_rejects_colorful_natural_like_input():
+    blue = Image.new("RGB", (96, 96), color=(255, 0, 0))
+    green = Image.new("RGB", (96, 96), color=(0, 255, 0))
+    image = Image.new("RGB", (192, 96))
+    image.paste(blue, (0, 0))
+    image.paste(green, (96, 0))
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    img_cv2 = main.cv2.imdecode(main.np.frombuffer(image_bytes.getvalue(), main.np.uint8), main.cv2.IMREAD_COLOR)
+
+    result = main.precheck_ultrasound_image(img_cv2)
+
+    assert result.is_ultrasound is False
+    assert "Input is not recognized as an ultrasound image" in result.reason
+
+
+def test_v2_detection_pig_returns_unknown_for_non_ultrasound(monkeypatch):
+    def fake_save(img_cv2, filename, kind="anomaly"):
+        return f"D:/apiUltraSoundSwine/app/detections/{kind}_saved.png"
+
+    monkeypatch.setattr(main, "max_images", 1)
+    monkeypatch.setattr(main, "save_detection_input", fake_save)
+    client = TestClient(main.app)
+    image_bytes = BytesIO()
+    image = Image.new("RGB", (192, 96))
+    image.paste(Image.new("RGB", (96, 96), color=(255, 0, 0)), (0, 0))
+    image.paste(Image.new("RGB", (96, 96), color=(0, 255, 0)), (96, 0))
+    image.save(image_bytes, format="PNG")
+
+    response = client.post(
+        "/v2/detection_pig",
+        files=[("files", ("car_like.png", image_bytes.getvalue(), "image/png"))],
+    )
+
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["result"] == "unknown"
+    assert item["confidence"] == 0.0
+    assert item["path_images"].endswith("unknown_saved.png")
+    assert "Input is not recognized as an ultrasound image" in item["error_remark"]
+
+
+def test_v2_detection_pig_follicle_returns_unknown_for_non_ultrasound(monkeypatch):
+    def fake_save(img_cv2, filename, kind="anomaly"):
+        return f"D:/apiUltraSoundSwine/app/detections/{kind}_saved.png"
+
+    monkeypatch.setattr(main, "max_images", 1)
+    monkeypatch.setattr(main, "save_detection_input", fake_save)
+    client = TestClient(main.app)
+    image_bytes = BytesIO()
+    image = Image.new("RGB", (192, 96))
+    image.paste(Image.new("RGB", (96, 96), color=(255, 0, 0)), (0, 0))
+    image.paste(Image.new("RGB", (96, 96), color=(0, 255, 0)), (96, 0))
+    image.save(image_bytes, format="PNG")
+
+    response = client.post(
+        "/v2/detection_pig_follicle",
+        files=[("files", ("car_like.png", image_bytes.getvalue(), "image/png"))],
+    )
+
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["result"] == "unknown"
+    assert item["confidence"] == 0.0
+    assert item["path_images"].endswith("unknown_saved.png")
+    assert "Input is not recognized as an ultrasound image" in item["error_remark"]
+
+
+def test_v2_detection_pig_follicle_saves_annotation_to_detect_follicle_path(monkeypatch, tmp_path):
+    def fake_save_input(img_cv2, filename):
+        return str(tmp_path / f"saved_{filename}")
+
+    def fake_detect(filename, save_path):
+        return main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="pregnant",
+                confidence=0.95,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="1_Pregnant",
+        )
+
+    def fake_analyze(img_cv2):
+        return {
+            "annotated_img": img_cv2,
+            "sac_count": 2,
+            "status": "1_Pregnant",
+            "detections": [{"label": "gestational sac"}],
+        }
+
+    def fake_save_annotation(img_cv2, filename):
+        return str(tmp_path / f"gemini_{filename}")
+
+    monkeypatch.setattr(main, "max_images", 1)
+    monkeypatch.setattr(main, "save_detection_input", fake_save_input)
+    monkeypatch.setattr(main, "detect_saved_pregnancy_image_with_backend", fake_detect)
+    monkeypatch.setattr(main, "analyze_ultrasound_core", fake_analyze)
+    monkeypatch.setattr(main, "save_annotation_result", fake_save_annotation)
+    client = TestClient(main.app)
+    image_bytes = BytesIO()
+    Image.new("RGB", (4, 4), color="black").save(image_bytes, format="PNG")
+
+    response = client.post(
+        "/v2/detection_pig_follicle",
+        files=[("files", ("scan.png", image_bytes.getvalue(), "image/png"))],
+    )
+
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["result"] == "pregnant"
+    assert item["path_images"].endswith("gemini_scan.png")
+    assert item["number_of_fetus"] == 2
+    assert item["error_remark"] == ""
+
+
+def test_v2_detection_pig_follicle_skips_gemini_when_not_pregnant(monkeypatch, tmp_path):
+    calls = {"analyze": 0}
+
+    def fake_save_input(img_cv2, filename):
+        return str(tmp_path / f"saved_{filename}")
+
+    def fake_detect(filename, save_path):
+        return main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="no pregnant",
+                confidence=0.81,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="2_NoPrenant_or_NotSure",
+        )
+
+    def fail_analyze(img_cv2):
+        calls["analyze"] += 1
+        raise AssertionError("Gemini should not be called")
+
+    monkeypatch.setattr(main, "max_images", 1)
+    monkeypatch.setattr(main, "save_detection_input", fake_save_input)
+    monkeypatch.setattr(main, "detect_saved_pregnancy_image_with_backend", fake_detect)
+    monkeypatch.setattr(main, "analyze_ultrasound_core", fail_analyze)
+    client = TestClient(main.app)
+    image_bytes = BytesIO()
+    Image.new("RGB", (4, 4), color="black").save(image_bytes, format="PNG")
+
+    response = client.post(
+        "/v2/detection_pig_follicle",
+        files=[("files", ("scan.png", image_bytes.getvalue(), "image/png"))],
+    )
+
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["result"] == "no pregnant"
+    assert item["path_images"].endswith("saved_scan.png")
+    assert item["number_of_fetus"] == 0
+    assert item["error_remark"] == ""
+    assert calls["analyze"] == 0
+
+
+def test_v2_detection_pig_follicle_skips_gemini_when_ensemble_disagrees(monkeypatch, tmp_path):
+    calls = {"analyze": 0}
+
+    def fake_save_input(img_cv2, filename):
+        return str(tmp_path / f"saved_{filename}")
+
+    def fake_detect(filename, save_path):
+        return main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="no pregnant",
+                confidence=0.92,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="2_NoPrenant_or_NotSure",
+        )
+
+    def fail_analyze(img_cv2):
+        calls["analyze"] += 1
+        raise AssertionError("Gemini should not be called")
+
+    monkeypatch.setattr(main, "max_images", 1)
+    monkeypatch.setattr(main, "save_detection_input", fake_save_input)
+    monkeypatch.setattr(main, "detect_saved_pregnancy_image_with_backend", fake_detect)
+    monkeypatch.setattr(main, "analyze_ultrasound_core", fail_analyze)
+    client = TestClient(main.app)
+    image_bytes = BytesIO()
+    Image.new("RGB", (4, 4), color="black").save(image_bytes, format="PNG")
+
+    response = client.post(
+        "/v2/detection_pig_follicle",
+        files=[("files", ("scan.png", image_bytes.getvalue(), "image/png"))],
+    )
+
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["result"] == "no pregnant"
+    assert item["path_images"].endswith("saved_scan.png")
+    assert calls["analyze"] == 0
+
+
+def test_v2_detection_pig_follicle_keeps_gate_output_when_gemini_annotation_not_usable(monkeypatch, tmp_path):
+    def fake_save_input(img_cv2, filename):
+        return str(tmp_path / f"saved_{filename}")
+
+    def fake_detect(filename, save_path):
+        return main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="pregnant",
+                confidence=0.93,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="1_Pregnant",
+        )
+
+    def fake_analyze(img_cv2):
+        return {
+            "annotated_img": img_cv2,
+            "sac_count": 0,
+            "status": "2_NoPregnant",
+            "detections": [],
+        }
+
+    monkeypatch.setattr(main, "max_images", 1)
+    monkeypatch.setattr(main, "save_detection_input", fake_save_input)
+    monkeypatch.setattr(main, "detect_saved_pregnancy_image_with_backend", fake_detect)
+    monkeypatch.setattr(main, "analyze_ultrasound_core", fake_analyze)
+    client = TestClient(main.app)
+    image_bytes = BytesIO()
+    Image.new("RGB", (4, 4), color="black").save(image_bytes, format="PNG")
+
+    response = client.post(
+        "/v2/detection_pig_follicle",
+        files=[("files", ("scan.png", image_bytes.getvalue(), "image/png"))],
+    )
+
+    assert response.status_code == 200
+    item = response.json()["results"][0]
+    assert item["result"] == "pregnant"
+    assert item["path_images"].endswith("saved_scan.png")
+    assert item["number_of_fetus"] == 0
+    assert item["error_remark"] == "Gemini did not return usable follicle annotation"
+
+
+def test_openapi_uses_binary_file_schema_for_v2_follicle_upload():
+    client = TestClient(main.app)
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    payload = response.json()
+    request_schema = payload["paths"]["/v2/detection_pig_follicle"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+    ref_name = request_schema["$ref"].split("/")[-1]
+    files_schema = payload["components"]["schemas"][ref_name]["properties"]["files"]
+    assert files_schema["type"] == "array"
+    assert files_schema["items"]["type"] == "string"
+    assert files_schema["items"]["format"] == "binary"
+    assert "contentMediaType" not in files_schema["items"]
 
 
 def test_legacy_detect_anomaly_route_is_removed():
@@ -514,6 +907,45 @@ def test_process_v2_pdf_upload_keeps_legacy_yolo_label(monkeypatch, tmp_path):
     assert calls[0]["path_val"] == main.asset_dir
 
 
+def test_process_v2_pdf_upload_supports_ensemble_legacy_mapping(monkeypatch, tmp_path):
+    saved_page = tmp_path / "page_001.png"
+    calls = []
+
+    def fake_render(pdf_path):
+        return [("scan.pdf#page=1", str(saved_page))]
+
+    def fake_detect(source_name, save_path):
+        return main.PregnancyDetectionOutcome(
+            result=main.ImageResult(
+                path_images=save_path,
+                result="no pregnant",
+                confidence=0.92,
+                number_of_fetus=0,
+                error_remark="",
+            ),
+            legacy_ai_label="2_NoPrenant_or_NotSure",
+        )
+
+    def fake_insert(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setenv("PREGNANCY_DETECT_MODEL_V2", "ensemble")
+    monkeypatch.setenv("INSERT_ULTRASOUND_TO_DB", "true")
+    monkeypatch.setattr(main, "render_pdf_pages_to_asset", fake_render)
+    monkeypatch.setattr(main, "detect_saved_pregnancy_image_with_backend", fake_detect)
+    monkeypatch.setattr(main, "extract_info_from_image", lambda path: main.default_ocr_info())
+    monkeypatch.setattr(main, "insert_ultrasound_to_db", fake_insert)
+
+    ok, detail = main.process_v2_pdf_upload(tmp_path / "generated_v2.pdf", "scan.pdf")
+
+    assert ok is True
+    assert detail is None
+    assert len(calls) == 1
+    assert calls[0]["results_ai"] == "2_NoPrenant_or_NotSure"
+    assert calls[0]["conf_score"] == 0.92
+    assert calls[0]["path_val"] == main.asset_dir
+
+
 def test_process_v2_pdf_upload_skips_db_insert_when_disabled(monkeypatch, tmp_path):
     saved_page = tmp_path / "page_001.png"
     calls = {"insert": 0}
@@ -557,27 +989,79 @@ def test_retrain_anomaly_starts_background_job(monkeypatch):
             "commands": [["python", "train_anomaly_models.py"]],
         }
 
+    monkeypatch.setattr(
+        main,
+        "load_retrain_anomaly_config",
+        lambda: main.AnomalyTrainRequest(
+            feature_sets="handcrafted",
+            model_keys="handcrafted__logistic_regression_balanced",
+            batch_size=8,
+            generate_report=False,
+            detail_heatmaps="none",
+            rebuild_index=True,
+            force=False,
+        ),
+    )
+    monkeypatch.setattr(main, "start_anomaly_training", fake_start)
+    client = TestClient(main.app)
+
+    response = client.post("/anomaly/retrain/", json={})
+
+    assert response.status_code == 202
+    assert response.json()["job_id"] == "job-1"
+    assert seen == {
+        "feature_sets": "handcrafted",
+        "model_keys": "handcrafted__logistic_regression_balanced",
+        "batch_size": 8,
+        "generate_report": False,
+        "detail_heatmaps": "none",
+        "rebuild_index": True,
+        "force": False,
+    }
+
+
+def test_retrain_anomaly_request_overrides_json_config(monkeypatch):
+    seen = {}
+
+    def fake_start(**kwargs):
+        seen.update(kwargs)
+        return {
+            "job_id": "job-override",
+            "status": "queued",
+            "commands": [["python", "train_anomaly_models.py"]],
+        }
+
+    monkeypatch.setattr(
+        main,
+        "load_retrain_anomaly_config",
+        lambda: main.AnomalyTrainRequest(
+            feature_sets="handcrafted,resnet18,dinov2",
+            model_keys="handcrafted__logistic_regression_balanced",
+            batch_size=16,
+            generate_report=True,
+            detail_heatmaps="active",
+            rebuild_index=True,
+            force=False,
+        ),
+    )
     monkeypatch.setattr(main, "start_anomaly_training", fake_start)
     client = TestClient(main.app)
 
     response = client.post(
         "/anomaly/retrain/",
         json={
-            "feature_sets": "handcrafted",
             "batch_size": 8,
-            "generate_report": False,
             "detail_heatmaps": "none",
-            "rebuild_index": True,
         },
     )
 
     assert response.status_code == 202
-    assert response.json()["job_id"] == "job-1"
+    assert response.json()["job_id"] == "job-override"
     assert seen == {
-        "feature_sets": "handcrafted",
-        "model_keys": None,
+        "feature_sets": "handcrafted,resnet18,dinov2",
+        "model_keys": "handcrafted__logistic_regression_balanced",
         "batch_size": 8,
-        "generate_report": False,
+        "generate_report": True,
         "detail_heatmaps": "none",
         "rebuild_index": True,
         "force": False,

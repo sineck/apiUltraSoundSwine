@@ -119,9 +119,9 @@ def save_anomaly_cv2(img_cv2: np.ndarray, kind: str = "anomaly", page_number: in
     return str(out_path)
 
 
-def save_detection_input(img_cv2: np.ndarray, org_filename: str) -> str:
-    # ใช้เก็บภาพ input ของสาย detect รูป ไม่ผูกกับ anomaly อย่างเดียวแล้ว
-    return save_anomaly_cv2(img_cv2, kind="anomaly")
+def save_detection_input(img_cv2: np.ndarray, org_filename: str, kind: str = "anomaly") -> str:
+    # ใช้เก็บภาพ input ของสาย detect รูป โดยเลือก prefix ตามสถานะงาน เช่น anomaly / unknown
+    return save_anomaly_cv2(img_cv2, kind=kind)
 
 
 def render_anomaly_pdf_images(pdf_path: Path) -> list[tuple[str, str]]:

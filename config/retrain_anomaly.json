@@ -1,0 +1,9 @@
+{
+  "feature_sets": "handcrafted,resnet18,dinov2",
+  "model_keys": "handcrafted__logistic_regression_balanced,resnet18__logistic_regression_balanced,handcrafted__normal_quantile,dinov2__random_forest_balanced",
+  "batch_size": 16,
+  "generate_report": true,
+  "detail_heatmaps": "active",
+  "rebuild_index": true,
+  "force": false
+}

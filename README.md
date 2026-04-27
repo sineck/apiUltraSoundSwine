@@ -35,14 +35,37 @@
   - เลือก backend จาก `PREGNANCY_DETECT_MODEL_V2`
     - `anomaly`
     - `yolo`
+    - `ensemble`
   - ตอบกลับแบบ legacy เดิม `{"status":"complete"}` หรือ `{"status":"error"}`
   - ถ้าเปิด DB จะเขียนลงตารางเดิมด้วย legacy labels
 
 - `POST /v2/detection_pig`
   - รับหลายภาพ
   - เลือก backend จาก `PREGNANCY_DETECT_MODEL_V2`
+  - มี precheck กันภาพนอกโดเมนก่อนเข้า model ถ้าภาพไม่เข้าลักษณะ ultrasound จะตอบ `unknown`
   - ตอบ JSON shape เดียวกับ `/detect_follicle/`
   - ถ้าเปิด DB จะเขียนลงตารางเดิมด้วย legacy labels
+
+- `POST /v2/detection_pig_follicle`
+  - รับหลายภาพ
+  - ใช้ model gate แบบเดียวกับ `/v2/detection_pig`
+  - มี precheck กันภาพนอกโดเมนก่อนเข้า model ถ้าภาพไม่เข้าลักษณะ ultrasound จะตอบ `unknown`
+  - ถ้าผล gate เป็น `pregnant` ค่อยเรียก Gemini เพื่อวงรูป
+  - ถ้า Gemini ให้ผล usable จะบันทึกรูป annotated ลง `app/detections/`
+  - ถ้า Gemini ไม่ให้ annotation ที่ใช้ได้ จะคืนผล gate เดิมพร้อม `error_remark`
+
+### System
+
+- `GET /`
+  - redirect ไป `/docs`
+- `GET /openapi.json`
+  - schema ของ API
+- `GET /docs`
+  - Swagger UI
+- `GET /version`
+  - คืนชื่อและเวอร์ชันของแอป
+- `GET /health`
+  - เช็ก MySQL และคืน safe runtime config summary โดยไม่เปิด secret
 
 ## AI backend ที่ระบบใช้
 
@@ -65,6 +88,41 @@ PREGNANCY_DETECT_MODEL_V2=yolo
 ```env
 PREGNANCY_DETECT_MODEL_V2=anomaly
 ```
+
+### Ensemble backend
+
+- ใช้กับ V2 เท่านั้น
+- ตั้งค่า:
+
+```env
+PREGNANCY_DETECT_MODEL_V2=ensemble
+ModelName=best_finetune_YOLO26-cls_Ver2_20260424.pt
+```
+
+- หลักการ:
+  - anomaly และ YOLO ต้องตอบ `pregnant` พร้อมกัน จึงถือว่า final result เป็น `pregnant`
+  - ถ้าไม่ตรงกัน หรือมีฝั่งใดไม่ใช่ `pregnant` จะถือเป็น `no pregnant`
+  - ถ้ามี backend พัง จะคืน `error` ตรง ๆ ไม่กลบผล
+
+## V2 precheck
+
+- ใช้กับ `POST /v2/detection_pig` และ `POST /v2/detection_pig_follicle`
+- กรองภาพก่อนเข้า model ด้วยกติกาเบื้องต้น:
+  - ภาพควรมี low color complexity
+  - histogram ควรมีโทนดำ/เทาเด่น
+  - edge density ต้องไม่ฟุ้งแบบภาพธรรมชาติ
+- ถ้าไม่ผ่าน precheck ระบบจะตอบ:
+- ระบบจะยังบันทึกรูปไว้ใน `app/detections/` ด้วย prefix `unknown_` เพื่อใช้ trace/debug
+- ถ้าไม่ผ่าน precheck ระบบจะตอบ:
+
+```json
+{
+  "result": "unknown",
+  "confidence": 0.0
+}
+```
+
+พร้อม `error_remark` ว่าไม่ถูกมองเป็นภาพ ultrasound
 
 - active model อ่านจาก:
 
@@ -101,8 +159,33 @@ GEMINI_API_KEY=...
 - `PREGNANCY_DETECT_MODEL_V2`
   - `anomaly` = ใช้ backend ใหม่ของ V2
   - `yolo` = ใช้ backend YOLO เดิมของ V2
+  - `ensemble` = ใช้ anomaly + YOLO ร่วมกัน โดยต้องเห็นตรงกันว่า `pregnant`
+- `config/retrain_anomaly.json`
+  - source of truth ของ default retrain สำหรับทั้ง API และ Python wrapper
 
 ## เริ่มใช้แบบเร็วที่สุด
+
+ถ้าจะรันแอปตรงจาก source โดยไม่ใช้ Docker:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 3014 --reload
+```
+
+หรือถ้าไม่ใช้ `--reload`:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 3014
+```
+
+ถ้าจะติดตั้ง dependency ใหม่ ให้ใช้ไฟล์เดียว:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+หมายเหตุ:
+- ใช้ `config/.env` เป็น runtime config จริง
+- ถ้าจะเปลี่ยน port ให้แก้ `MYAPI_PORT` ใน `config/.env` และเปลี่ยน `--port` ให้ตรงกัน
 
 ถ้าจะรันระบบด้วย Docker ให้ใช้:
 
@@ -119,6 +202,7 @@ docker compose -f docker-compose.image.yml --env-file config/.env up -d --pull n
 หลังรันแล้ว เปิดได้ที่:
 
 - API docs: `http://localhost:3014/docs`
+- OpenAPI JSON: `http://localhost:3014/openapi.json`
 - V1 upload form: `http://localhost:3014/upload_form`
 - V1 detect form: `http://localhost:3014/detect_form`
 - version: `http://localhost:3014/version`
@@ -138,6 +222,73 @@ INSERT_ULTRASOUND_TO_DB=false
 
 ตรงกับสิ่งที่ต้องการจริง
 
+## Retrain แบบจำสั้น
+
+ถ้า API รันอยู่แล้วและแค่ต้องการสั่ง retrain:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3014/anomaly/retrain/
+```
+
+เช็กสถานะ:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
+```
+
+ถ้าต้องการรันจาก Python ตรงโดยไม่ผ่าน API ให้ใช้คำสั่งเดียวนี้:
+
+```powershell
+.\.venv\Scripts\python.exe AnomalyDetection\scripts\retrain_from_config.py
+```
+
+ทั้ง API และ Python wrapper จะอ่านค่า default จาก:
+
+```text
+config/retrain_anomaly.json
+```
+
+ดังนั้นถ้าจะเปลี่ยนชุด model, `batch_size`, การ rebuild index, หรือการ generate report ให้แก้ไฟล์นี้ไฟล์เดียว
+
+ถ้าจะ override บางค่าเฉพาะครั้งเดียวผ่าน API ให้ส่งเฉพาะ field ที่ต้องการเปลี่ยนได้ เช่น:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:3014/anomaly/retrain/ `
+  -ContentType 'application/json' `
+  -Body '{"batch_size":8,"detail_heatmaps":"none"}'
+```
+
+ระบบจะเอาค่าที่ส่งมาทับบน default จาก `config/retrain_anomaly.json` เฉพาะ field นั้น
+
+## Health Response
+
+`GET /health` ตอนนี้ไม่ได้คืนแค่สถานะ DB อย่างเดียว แต่แนบ `config` summary ที่ปลอดภัยกลับมาด้วย เช่น path ของ config จริง, backend ที่ active, ชื่อ YOLO model, Gemini model, และ `max_images`
+
+ตัวอย่าง shape:
+
+```json
+{
+  "status": "ok",
+  "db": "connected",
+  "app": {
+    "name": "apiUltraSoundSwine",
+    "version": "0.1.0"
+  },
+  "config": {
+    "config_path": "D:/apiUltraSoundSwine/config/.env",
+    "myapi_port": 3014,
+    "insert_ultrasound_to_db": true,
+    "pregnancy_detect_model_v2": "anomaly",
+    "yolo_model_name": "best.pt",
+    "gemini_model": "gemini-3-flash-preview",
+    "max_images": 5
+  }
+}
+```
+
+secret เช่น `MYSQL_PASSWORD` จะไม่ถูกคืนใน payload นี้
+
 ## โครงสร้างโปรเจคที่ควรรู้
 
 ```text
@@ -156,6 +307,7 @@ AnomalyDetection/
 config/
   .env                   config จริง
   .env.example           template
+  retrain_anomaly.json   default retrain config สำหรับ API และ Python wrapper
 
 tests/
   mock_data/             ไฟล์ทดสอบจริง

@@ -12,6 +12,7 @@ This folder contains a standalone training workflow for pig ultrasound pregnancy
 - **V2 runtime** ที่เรียก anomaly backend ได้จริงคือ:
   - `POST /v2/upload_pdf/`
   - `POST /v2/detection_pig`
+  - `POST /v2/detection_pig_follicle`
 - การเลือกว่าจะใช้ anomaly หรือ YOLO ใน V2 ถูกคุมจาก `config/.env` ด้วยค่า:
 
 ```env
@@ -48,6 +49,50 @@ PREGNANCY_DETECT_MODEL_V2=anomaly
 .\.venv\Scripts\python.exe AnomalyDetection\scripts\predict_image.py "tests\mock_data\sample_input.png"
 ```
 
+### เทียบโมเดลบนชุด validate
+
+ถ้าต้องการเทียบผลของ:
+
+- `anomaly`
+- `yolo:best.pt`
+- `yolo:best_finetune_YOLO26-cls_Ver2_20260424.pt`
+- `ensemble:anomaly+yolo_finetune`
+
+ให้ใช้สคริปต์นี้จาก root repo:
+
+```powershell
+.\.venv\Scripts\python.exe tests\run_validate_compare.py
+```
+
+สคริปต์นี้จะ:
+
+- รันภาพทุกไฟล์ใน `AnomalyDetection/asset/validate`
+- ไม่ผ่าน Gemini
+- พิมพ์ summary table และ detail table ลง console
+- ใช้กติกา binary เดียวกันทั้งชุด:
+  - `1_Pregnant` = `pregnant`
+  - `2_NoPregnant` = `no_pregnant`
+  - `3_NotSure` = `no_pregnant`
+
+ถ้าต้องการรัน compare แล้วเขียนรายงาน HTML ไปพร้อมกัน ใช้:
+
+```powershell
+.\.venv\Scripts\python.exe tests\run_validate_compare.py --write-report
+```
+
+คำสั่งนี้จะเขียนไฟล์:
+
+- `AnomalyDetection/outputs/report/index.html`
+- `AnomalyDetection/outputs/report/report_data.json`
+
+ถ้ายังมีคนเรียก wrapper เดิมอยู่ ก็ยังใช้ได้:
+
+```powershell
+.\.venv\Scripts\python.exe tests\generate_validate_report.py
+```
+
+แต่ตอนนี้เส้นหลักที่ครบที่สุดคือ `run_validate_compare.py --write-report`
+
 ### เรียก retrain ผ่าน API
 
 เปิด Swagger UI ก่อน:
@@ -57,19 +102,42 @@ PREGNANCY_DETECT_MODEL_V2=anomaly
   - `POST /anomaly/retrain/`
   - `GET /anomaly/retrain/status/`
 
-ถ้าต้องการลองกดจากหน้าเว็บ ให้เริ่มจาก `/docs` ก่อน แล้วค่อยใช้ตัวอย่าง `curl` ด้านล่างเมื่อจะเรียกจาก terminal หรือ script
+ถ้าต้องการลองกดจากหน้าเว็บ ให้เริ่มจาก `/docs` ก่อน แล้วค่อยใช้คำสั่งด้านล่างเมื่อจะเรียกจาก terminal หรือ script
 
 ```powershell
-curl -X POST http://127.0.0.1:3014/anomaly/retrain/ `
-  -H "Content-Type: application/json" `
-  -d "{\"feature_sets\":\"handcrafted,resnet18,dinov2\",\"batch_size\":16,\"generate_report\":true,\"detail_heatmaps\":\"active\",\"rebuild_index\":true}"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3014/anomaly/retrain/
 ```
 
 ### เช็กสถานะ retrain job
 
 ```powershell
-curl http://127.0.0.1:3014/anomaly/retrain/status/
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 ```
+
+### เรียก retrain จาก Python ตรง
+
+ถ้าไม่ต้องการผ่าน API และต้องการให้ train/index/report วิ่งตาม config เดียวกัน:
+
+```powershell
+.\.venv\Scripts\python.exe AnomalyDetection\scripts\retrain_from_config.py
+```
+
+ทั้ง route และ script นี้จะอ่านค่าจาก:
+
+```text
+config/retrain_anomaly.json
+```
+
+ถ้าต้องการ override แค่บาง field ผ่าน API โดยไม่แก้ไฟล์ config:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:3014/anomaly/retrain/ `
+  -ContentType 'application/json' `
+  -Body '{"batch_size":8,"detail_heatmaps":"none"}'
+```
+
+ระบบจะ merge ค่านี้ทับบน default ใน `config/retrain_anomaly.json`
 
 ## Dataset Layout
 
@@ -175,12 +243,16 @@ The report generator also writes cleaned input images next to the heatmaps, so t
 Start a new anomaly training job in the background:
 
 ```powershell
-curl -X POST http://127.0.0.1:3014/anomaly/retrain/ `
-  -H "Content-Type: application/json" `
-  -d "{\"feature_sets\":\"handcrafted,resnet18,dinov2\",\"batch_size\":16,\"generate_report\":true,\"detail_heatmaps\":\"active\",\"rebuild_index\":true}"
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:3014/anomaly/retrain/
 ```
 
-If `model_keys` is not sent, the API uses the compact 4-model default. Send `"model_keys":"all"` only for the full research sweep.
+If you need to run the same retrain flow without API, use:
+
+```powershell
+.\.venv\Scripts\python.exe AnomalyDetection\scripts\retrain_from_config.py
+```
+
+ทั้งสองทางจะใช้ค่าใน `config/retrain_anomaly.json` เป็น default กลาง ถ้าจะเปลี่ยน compact set, `batch_size`, หรือ heatmap mode ให้แก้ไฟล์นี้
 
 หมายเหตุเรื่อง runtime:
 
@@ -191,7 +263,7 @@ If `model_keys` is not sent, the API uses the compact 4-model default. Send `"mo
 Check status:
 
 ```powershell
-curl http://127.0.0.1:3014/anomaly/retrain/status/
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 ```
 
 `detail_heatmaps` can be `none`, `active`, or `all`. Use `all` only when you really want heatmaps for every test image of every model, because it is slow.
@@ -234,5 +306,11 @@ CLI นี้ใช้ logic resolve active model แบบเดียวกั
   - เรียก anomaly backend ทีละรูป
   - คืน response shape แบบเดียวกับ `/detect_follicle/`
   - ถ้าเปิด `INSERT_ULTRASOUND_TO_DB=true` จะเขียน DB ด้วย legacy labels เดียวกัน
+
+- `POST /v2/detection_pig_follicle`
+  - รับหลายรูป
+  - ใช้ anomaly backend เป็น gate ก่อน
+  - ถ้าผล gate เป็น `pregnant` ค่อยเรียก Gemini เพื่อพยายามสร้าง annotation
+  - ถ้า Gemini ไม่คืน annotation ที่ใช้ได้ route จะยังคืนผล gate เดิม แต่ใส่ `error_remark`
 
 ดังนั้นฝั่ง anomaly training/artifact ในโฟลเดอร์นี้ไม่ได้ถูกเรียกโดย V1 โดยตรง แต่เป็น backend ที่ V2 route เลือกใช้ได้ผ่าน config เท่านั้น
