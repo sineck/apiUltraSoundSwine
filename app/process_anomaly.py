@@ -22,7 +22,6 @@
 
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
-import sys
 
 import cv2
 import numpy as np
@@ -34,32 +33,10 @@ from app.process_pdf import crop_real_image, render_pdf_pages
 
 pathInitial = Path(__file__).resolve().parent.parent
 ANOMALY_ROOT = pathInitial / "AnomalyDetection"
-ANOMALY_SCRIPT_DIR = ANOMALY_ROOT / "scripts"
 ANOMALY_REGISTRY = ANOMALY_ROOT / "artifacts" / "models" / "model_registry.json"
 
-# สำคัญ:
-# - `process_anomaly.py` อยู่ใต้ `app/`
-# - แต่ anomaly core library จริงอยู่ที่
-#   `D:\apiUltraSoundSwine\AnomalyDetection\scripts\anomaly_lib.py`
-#
-# ดังนั้นถ้าเปิดไฟล์นี้แล้วเห็น `from anomaly_lib import ...` จะหาไฟล์ชื่อ
-# `app/anomaly_lib.py` ไม่เจอ ซึ่งเป็นเรื่องปกติ เพราะ import นี้ไม่ได้อิง path
-# เดิมของ package `app`
-#
-# ที่มัน import ได้ เพราะเราเติม folder
-# `D:\apiUltraSoundSwine\AnomalyDetection\scripts`
-# เข้า `sys.path` ก่อน ทำให้ Python มองว่าไฟล์ `anomaly_lib.py` ใน folder นั้น
-# เป็น top-level module ชื่อ `anomaly_lib`
-#
-# สรุปสั้น:
-# - ชื่อ import ที่เห็น: `anomaly_lib`
-# - ไฟล์จริงบนดิสก์: `AnomalyDetection/scripts/anomaly_lib.py`
-# - เหตุผลที่ทำแบบนี้: reuse logic train/validate/runtime ชุดเดียวกัน
-if str(ANOMALY_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(ANOMALY_SCRIPT_DIR))
-
-from anomaly_lib import (  # noqa: E402
-    # import จาก `AnomalyDetection/scripts/anomaly_lib.py` โดยตรง หลังเติม sys.path แล้ว
+# import แบบ package path ตรง ๆ เพื่อให้คนอ่านตามไฟล์ต้นทางได้ทันที
+from AnomalyDetection.scripts.anomaly_lib import (
     # ImageRow = row มาตรฐานที่ lib anomaly ใช้แทนภาพหนึ่งใบพร้อม metadata
     ImageRow,
     # extract_patch_handcrafted = แตก feature แบบ patch-based handcrafted
@@ -198,7 +175,18 @@ def format_anomaly_result(filename: str, prediction: dict, save_path: str) -> Im
 
 
 def save_anomaly_cv2(img_cv2: np.ndarray, kind: str = "anomaly", page_number: int | None = None) -> str:
-    """บันทึกภาพผลลัพธ์/ภาพกลางลงโฟลเดอร์ detections พร้อมตั้งชื่อไฟล์มาตรฐาน."""
+    """บันทึกภาพลง `app/detections`.
+
+    ฟังก์ชันนี้เป็นจุดกลางของสาย anomaly/V2 ที่ต้องเขียนภาพลงดิสก์ ไม่ว่าจะเป็น:
+    - ภาพ input ที่ save ไว้ก่อน detect
+    - ภาพหน้า PDF ที่ render/crop แล้ว
+    - ภาพสถานะ `unknown`
+
+    `kind` จะถูกส่งไปสร้าง prefix ของชื่อไฟล์ เช่น:
+    - `anomaly_...`
+    - `unknown_...`
+    - `preg_pdf_p001_...`
+    """
     output_dir = pathInitial / "app" / "detections"
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / build_image_filename(kind, page_number=page_number)
@@ -217,7 +205,15 @@ def save_detection_input(img_cv2: np.ndarray, org_filename: str, kind: str = "an
 
 
 def render_anomaly_pdf_images(pdf_path: Path) -> list[tuple[str, str]]:
-    """render และ crop PDF ทีละหน้าแล้วบันทึกเป็นภาพสำหรับสาย anomaly/V2."""
+    """render PDF ทีละหน้าแล้วแปลงเป็นภาพสำหรับสาย anomaly/V2.
+
+    output ของฟังก์ชันนี้คือ list ของ tuple:
+    - item[0] = logical source name เช่น `file.pdf#page=2`
+    - item[1] = path ของภาพที่ save แล้วใน `app/detections`
+
+    ฟังก์ชันนี้ไม่ได้รันโมเดลเอง มีหน้าที่แค่เตรียมภาพให้ route ชั้นบนเอาไปผ่าน
+    anomaly / yolo / ensemble ต่อ
+    """
     images = []
     for idx, page in enumerate(render_pdf_pages(str(pdf_path)), start=1):
         crop = crop_real_image(page)

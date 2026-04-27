@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from sklearn.metrics import precision_score, recall_score, roc_auc_score
 
-from anomaly_lib import (
+from AnomalyDetection.scripts.anomaly_lib import (
     ImageRow,
     clean_ultrasound_image,
     discover_dataset,

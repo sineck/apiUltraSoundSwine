@@ -12,9 +12,9 @@ from typing import Literal
 
 pathInitial = Path(__file__).resolve().parent.parent
 ANOMALY_ROOT = pathInitial / "AnomalyDetection"
-TRAIN_SCRIPT = ANOMALY_ROOT / "scripts" / "train_anomaly_models.py"
-REPORT_SCRIPT = ANOMALY_ROOT / "scripts" / "generate_report.py"
-INDEX_SCRIPT = ANOMALY_ROOT / "scripts" / "build_artifact_index.py"
+TRAIN_MODULE = "AnomalyDetection.scripts.train_anomaly_models"
+REPORT_MODULE = "AnomalyDetection.scripts.generate_report"
+INDEX_MODULE = "AnomalyDetection.scripts.build_artifact_index"
 REGISTRY_PATH = ANOMALY_ROOT / "artifacts" / "models" / "model_registry.json"
 REPORT_INDEX = ANOMALY_ROOT / "outputs" / "report" / "index.html"
 JOB_DIR = pathInitial / "logs" / "anomaly_training"
@@ -83,15 +83,15 @@ def build_training_commands(
     2. rebuild artifact index ถ้าถูกเปิดไว้
     3. generate report ถ้าถูกเปิดไว้
     """
-    commands = [[sys.executable, str(TRAIN_SCRIPT), "--batch-size", str(batch_size)]]
+    commands = [[sys.executable, "-m", TRAIN_MODULE, "--batch-size", str(batch_size)]]
     if feature_sets:
         commands[0].extend(["--feature-sets", feature_sets])
     if model_keys:
         commands[0].extend(["--model-keys", model_keys])
     if rebuild_index:
-        commands.append([sys.executable, str(INDEX_SCRIPT)])
+        commands.append([sys.executable, "-m", INDEX_MODULE])
     if generate_report:
-        commands.append([sys.executable, str(REPORT_SCRIPT), "--detail-heatmaps", detail_heatmaps])
+        commands.append([sys.executable, "-m", REPORT_MODULE, "--detail-heatmaps", detail_heatmaps])
     return commands
 
 
@@ -173,9 +173,6 @@ def start_anomaly_training(
         raise ValueError("batch_size must be >= 1")
     if detail_heatmaps not in {"none", "active", "all"}:
         raise ValueError("detail_heatmaps must be one of: none, active, all")
-    if not TRAIN_SCRIPT.exists():
-        raise FileNotFoundError(f"Missing train script: {TRAIN_SCRIPT}")
-
     JOB_DIR.mkdir(parents=True, exist_ok=True)
     job_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
     job = AnomalyTrainingJob(

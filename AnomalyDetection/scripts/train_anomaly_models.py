@@ -21,13 +21,14 @@ from sklearn.neighbors import LocalOutlierFactor
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import OneClassSVM
 
-from anomaly_lib import (
+from AnomalyDetection.scripts.anomaly_lib import (
     ImageRow,
     discover_dataset,
     extract_patch_handcrafted,
     get_feature_matrix,
     json_safe,
     label_prediction,
+    load_json,
     predict_from_scores,
     save_model_bundle,
     score_bundle,
@@ -575,7 +576,7 @@ def main() -> None:
     }
     registry_path = args.output_dir / "model_registry.json"
     if registry_path.exists():
-        existing = json_safe(__import__("json").loads(registry_path.read_text(encoding="utf-8")))
+        existing = json_safe(load_json(registry_path))
         registry["runs"] = {**existing.get("runs", {}), **registry["runs"]}
     write_json(registry_path, registry)
 

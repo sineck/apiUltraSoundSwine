@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+"""สร้างไฟล์ index แบบคนอ่านได้สำหรับ artifact ของ anomaly run หนึ่งรอบ.
+
+ไฟล์ใน `artifacts/models/<run_name>/` มีทั้ง `.joblib`, `*_weights.json`,
+`*_predictions_*.json` และ `experiment_results.json` ซึ่งมีประโยชน์ต่อ runtime
+แต่คนเปิดโฟลเดอร์ดูด้วยตาเปล่าจะไล่ยาก
+
+script นี้จึงทำหน้าที่:
+1. อ่าน `model_registry.json`
+2. เลือก run ที่ต้องการหรือ run active
+3. สร้างโฟลเดอร์ `_index/`
+4. เขียน manifest, scaler summary, csv summary และ README สำหรับ run นั้น
+"""
+
 import argparse
 import csv
 import json
@@ -8,15 +21,22 @@ from typing import Any
 
 
 def load_json(path: Path) -> Any:
+    """อ่าน JSON แบบ utf-8-sig เพื่อรองรับไฟล์ที่อาจมี BOM."""
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def write_json(path: Path, payload: Any) -> None:
+    """เขียน JSON แบบ utf-8 ลงดิสก์."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
+    """อ่าน argument ของ script.
+
+    - `--registry` = path ไป `model_registry.json`
+    - `--run-name` = ถ้าไม่ระบุ จะใช้ run ที่ active อยู่ใน registry
+    """
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Build human-readable indexes for anomaly model artifacts.")
     parser.add_argument("--registry", type=Path, default=root / "artifacts" / "models" / "model_registry.json")
@@ -25,20 +45,35 @@ def parse_args() -> argparse.Namespace:
 
 
 def active_run_name(registry: dict[str, Any], requested_run: str | None) -> str:
+    """หา run ที่จะใช้สร้าง index.
+
+    ถ้าผู้ใช้ส่ง `--run-name` มา จะใช้ค่านั้น
+    ถ้าไม่ส่ง จะ fallback ไป run ของ `active_model`
+    """
     if requested_run:
         return requested_run
     return str(registry["active_model"]).split("/", 1)[0]
 
 
 def prediction_path(model_file: str, model_key: str, split: str) -> str:
+    """สร้าง path มาตรฐานของ prediction JSON ของ model/split นั้น."""
     return str(Path(model_file).with_name(f"{model_key}_predictions_{split}.json"))
 
 
 def has_standard_scaler(weights: dict[str, Any]) -> bool:
+    """เช็กว่า weights json มี scaler แบบ mean/scale มาตรฐานหรือไม่."""
     return "scaler_mean" in weights and "scaler_scale" in weights
 
 
 def build_indexes(registry_path: Path, run_name: str | None) -> tuple[Path, dict[str, Any]]:
+    """สร้าง `_index` ทั้งชุดสำหรับ run anomaly หนึ่งรอบ.
+
+    output หลักคือ:
+    - `artifact_manifest.json`
+    - `scaler_index.json`
+    - `model_summary.csv`
+    - `README.md`
+    """
     registry = load_json(registry_path)
     selected_run = active_run_name(registry, run_name)
     run = registry["runs"][selected_run]
@@ -160,6 +195,7 @@ This `_index` folder is a human-readable map for the model files. The real runti
 
 
 def main() -> None:
+    """entrypoint ของ script."""
     args = parse_args()
     index_dir, manifest = build_indexes(args.registry, args.run_name)
     print(f"[DONE] Index: {index_dir}")

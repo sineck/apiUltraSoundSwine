@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+"""CLI สำหรับทำนายภาพเดียวด้วย active anomaly model.
+
+script นี้เป็นทางตรงสุดในการเช็ก anomaly backend แบบไม่ผ่าน API และไม่ผ่าน
+Gemini เหมาะกับงาน debug/benchmark รายภาพ
+"""
+
 import argparse
 from pathlib import Path, PureWindowsPath
 
 import numpy as np
 
-from anomaly_lib import (
+from AnomalyDetection.scripts.anomaly_lib import (
     ImageRow,
     extract_patch_handcrafted,
     get_feature_matrix,
@@ -20,6 +26,7 @@ from anomaly_lib import (
 
 
 def parse_args() -> argparse.Namespace:
+    """อ่าน argument ของการทำนายภาพเดียว."""
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Predict one ultrasound image with the active anomaly model.")
     parser.add_argument("image", type=Path)
@@ -29,6 +36,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_active_model(registry_path: Path) -> Path:
+    """หาไฟล์ `.joblib` ของ model active จาก registry.
+
+    รองรับกรณี registry เก็บ absolute Windows path จากเครื่อง train เดิม แต่ runtime
+    ปัจจุบันอยู่คนละเครื่องหรืออยู่ใน Docker
+    """
     registry = load_json(registry_path)
     active = registry["active_model"]
     run_name, model_key = active.split("/", 1)
@@ -42,6 +54,12 @@ def resolve_active_model(registry_path: Path) -> Path:
 
 
 def main() -> None:
+    """โหลด active bundle แล้วทำนายภาพเดียว.
+
+    flow จะเหมือน runtime ใน `app/process_anomaly.py`:
+    - patch feature set -> `extract_patch_handcrafted` + `score_patch_bundle`
+    - feature set ปกติ -> `get_feature_matrix` + `score_bundle`
+    """
     args = parse_args()
     model_path = resolve_active_model(args.registry)
     bundle = load_model_bundle(model_path)

@@ -28,25 +28,25 @@ PREGNANCY_DETECT_MODEL_V2=anomaly
 ### Train compact set ใหม่
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\train_anomaly_models.py
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.train_anomaly_models
 ```
 
 ### Train full research sweep
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\train_anomaly_models.py --model-keys all
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.train_anomaly_models --model-keys all
 ```
 
 ### Rebuild artifact index ของ active run
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\build_artifact_index.py
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.build_artifact_index
 ```
 
 ### ทำนายภาพเดียวจาก active model
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\predict_image.py "tests\mock_data\sample_input.png"
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.predict_image "tests\mock_data\sample_input.png"
 ```
 
 ### เทียบโมเดลบนชุด validate
@@ -119,7 +119,7 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 ถ้าไม่ต้องการผ่าน API และต้องการให้ train/index/report วิ่งตาม config เดียวกัน:
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\retrain_from_config.py
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.retrain_from_config
 ```
 
 ทั้ง route และ script นี้จะอ่านค่าจาก:
@@ -154,7 +154,7 @@ Before feature extraction, the pipeline applies a `clinical_clean` preprocessing
 From the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\train_anomaly_models.py
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.train_anomaly_models
 ```
 
 The default run keeps the compact production comparison set:
@@ -167,7 +167,7 @@ The default run keeps the compact production comparison set:
 To run the full research sweep again:
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\train_anomaly_models.py --model-keys all
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.train_anomaly_models --model-keys all
 ```
 
 The full sweep includes:

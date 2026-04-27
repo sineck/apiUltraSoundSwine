@@ -260,7 +260,7 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 ถ้าต้องการรันจาก Python ตรงโดยไม่ผ่าน API ให้ใช้คำสั่งเดียวนี้:
 
 ```powershell
-.\.venv\Scripts\python.exe AnomalyDetection\scripts\retrain_from_config.py
+.\.venv\Scripts\python.exe -m AnomalyDetection.scripts.retrain_from_config
 ```
 
 ทั้ง API และ Python wrapper จะอ่านค่า default จาก:

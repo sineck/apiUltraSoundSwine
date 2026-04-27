@@ -36,11 +36,22 @@ import joblib
 import numpy as np
 
 
+# นามสกุลไฟล์ภาพที่ pipeline anomaly ยอมรับตอน discover dataset
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+# mapping จากชื่อ folder label ใน dataset -> target class เชิงตัวเลข
+# - 1 = pregnant
+# - 0 = no_pregnant
+#
+# หมายเหตุ:
+# - ตอนนี้ repo นี้ยังไม่ใส่ `3_NotSure` ใน training target ตรง ๆ
+# - ชุด NotSure ถูกใช้ในงาน validate/report policy แยกต่างหาก
 LABEL_TO_TARGET = {
     "1_Pregnant": 1,
     "2_NoPregnant": 0,
 }
+
+# mapping กลับจากเลข target -> ชื่อ label ที่ runtime และ report อ่านง่าย
 TARGET_TO_LABEL = {
     1: "pregnant",
     0: "no_pregnant",
@@ -84,7 +95,12 @@ def json_safe(value: Any) -> Any:
 
 
 def write_json(path: Path, payload: Any) -> None:
-    """เขียน JSON แบบ utf-8 และรองรับอักขระ non-ASCII."""
+    """เขียน JSON ลงดิสก์แบบ utf-8.
+
+    ฟังก์ชันนี้ถูกใช้ในงาน report/metadata มากกว่าฝั่ง runtime โดยตรง
+    แต่ยังอยู่ใน lib กลางเพื่อไม่ให้แต่ละ script เขียน JSON helper ของตัวเอง
+    ซ้ำ
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(json_safe(payload), ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -118,7 +134,16 @@ def discover_dataset(asset_dir: Path) -> list[ImageRow]:
 
 
 def summarize_dataset(rows: Iterable[ImageRow]) -> dict[str, dict[str, int]]:
-    """สรุปจำนวนภาพแยกตาม split และ label."""
+    """สรุปจำนวนภาพแยกตาม split และ label.
+
+    ตัวอย่างผลลัพธ์:
+    ```python
+    {
+        "train": {"1_Pregnant": 120, "2_NoPregnant": 80},
+        "validate": {"1_Pregnant": 20, "2_NoPregnant": 20},
+    }
+    ```
+    """
     summary: dict[str, dict[str, int]] = {}
     for row in rows:
         split_summary = summary.setdefault(row.split, {})
@@ -127,7 +152,11 @@ def summarize_dataset(rows: Iterable[ImageRow]) -> dict[str, dict[str, int]]:
 
 
 def read_bgr_image(path: Path) -> np.ndarray:
-    """อ่านภาพเป็น BGR โดยรองรับ path Windows/UTF-8 ผ่าน `np.fromfile`."""
+    """อ่านภาพเป็น BGR โดยรองรับ path Windows/UTF-8.
+
+    ไม่ใช้ `cv2.imread()` ตรง ๆ เพราะ path ภาษาไทย/UTF-8 บน Windows มักมีปัญหา
+    ได้ง่าย จึงอ่าน bytes ก่อนด้วย `np.fromfile()` แล้วค่อย decode
+    """
     image = cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f"Cannot read image: {path}")
@@ -173,7 +202,15 @@ def remove_common_overlay_zones(image: np.ndarray) -> np.ndarray:
 
 
 def clean_ultrasound_image(path: Path) -> np.ndarray:
-    """อ่านภาพแล้ว clean ให้เหลือเนื้อภาพ ultrasound มากขึ้นก่อน extract feature."""
+    """อ่านภาพแล้ว clean ให้เหลือเนื้อภาพ ultrasound มากขึ้น.
+
+    ขั้นตอน clean ของ lib นี้คือ:
+    1. หา sector mask
+    2. ปิดพิกเซลนอก sector
+    3. ปิด overlay zones ที่มักมี text/scale bar
+
+    นี่คือ preprocessing พื้นฐานที่ทั้ง handcrafted และ deep features ใช้ร่วมกัน
+    """
     image = read_bgr_image(path)
     sector_mask = ultrasound_sector_mask(image)
     cleaned = image.copy()
@@ -182,7 +219,11 @@ def clean_ultrasound_image(path: Path) -> np.ndarray:
 
 
 def read_gray_image(path: Path, image_size: int = 224) -> np.ndarray:
-    """อ่านภาพ ultrasound แบบ clean แล้ว resize เป็น grayscale มาตรฐาน."""
+    """อ่านภาพ ultrasound แบบ clean แล้วแปลงเป็น grayscale มาตรฐาน.
+
+    `image_size=224` ถูกใช้เป็น baseline กลางให้ feature extractor หลายตัวใน repo
+    มี input scale ที่คงที่
+    """
     image = clean_ultrasound_image(path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return cv2.resize(image, (image_size, image_size), interpolation=cv2.INTER_AREA)
@@ -274,7 +315,13 @@ def handcrafted_features(path: Path, image_size: int = 224) -> np.ndarray:
 
 
 def extract_handcrafted(rows: list[ImageRow]) -> np.ndarray:
-    """extract handcrafted feature ให้หลายภาพแล้ว stack เป็น matrix."""
+    """extract handcrafted feature ให้หลายภาพแล้ว stack เป็น matrix.
+
+    output shape โดยทั่วไปคือ:
+    - `(n_images, n_features)`
+
+    ใช้กับ estimator ที่รับ feature matrix ตรง ๆ เช่น sklearn supervised/anomaly
+    """
     return np.vstack([handcrafted_features(row.path) for row in rows]).astype(np.float32)
 
 
@@ -313,12 +360,20 @@ def patch_handcrafted_features(path: Path, image_size: int = 224, grid_size: int
 
 
 def extract_patch_handcrafted(rows: list[ImageRow]) -> list[np.ndarray]:
-    """คืน patch feature ของหลายภาพเป็น list ตามลำดับภาพ input."""
+    """คืน patch feature ของหลายภาพเป็น list.
+
+    แต่ละสมาชิกใน list คือ feature matrix ราย patch ของภาพหนึ่งใบ
+    จึงไม่ stack เป็น array 2 มิติเดียวเหมือน `extract_handcrafted()`
+    """
     return [patch_handcrafted_features(row.path) for row in rows]
 
 
 def extract_resnet18(rows: list[ImageRow], batch_size: int = 16, device: str = "auto") -> np.ndarray:
-    """extract deep feature จาก ResNet18 pretrained."""
+    """extract deep feature จาก ResNet18 pretrained.
+
+    ใช้ pretrained backbone จาก torchvision แล้วตัดหัว classification ออก
+    (`model.fc = Identity`) เพื่อใช้ embedding ก่อนเข้า estimator ชั้นถัดไป
+    """
     import torch
     from PIL import Image
     from torchvision.models import ResNet18_Weights, resnet18
@@ -353,7 +408,11 @@ def extract_resnet18(rows: list[ImageRow], batch_size: int = 16, device: str = "
 
 
 def extract_dinov2(rows: list[ImageRow], batch_size: int = 8, device: str = "auto") -> np.ndarray:
-    """extract deep feature จาก DINOv2 pretrained."""
+    """extract deep feature จาก DINOv2 pretrained.
+
+    DINOv2 มีต้นทุนสูงกว่า handcrafted/resnet18 จึงจำกัด batch size ไว้ต่ำกว่า
+    เพื่อไม่ให้กินหน่วยความจำเกินระหว่าง train/validate
+    """
     import torch
     from PIL import Image
     from torchvision import transforms
@@ -407,13 +466,26 @@ def get_feature_matrix(rows: list[ImageRow], feature_set: str, batch_size: int =
 
 
 def save_model_bundle(path: Path, bundle: dict[str, Any]) -> None:
-    """เซฟ bundle ที่รวม estimator, scaler, threshold, metadata ลง `.joblib`."""
+    """เซฟ model bundle ลง `.joblib`.
+
+    bundle คือ artifact กลางที่ runtime ใช้จริง ประกอบด้วยอย่างน้อย:
+    - estimator
+    - scaler (ถ้ามี)
+    - threshold
+    - feature_set
+    - estimator_type
+    - metadata อื่นของรอบ train
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, path)
 
 
 def load_model_bundle(path: Path) -> dict[str, Any]:
-    """โหลด bundle anomaly จาก `.joblib`."""
+    """โหลด model bundle anomaly จาก `.joblib`.
+
+    ฝั่ง runtime จะไม่พยายามประกอบ model จากหลายไฟล์เอง แต่โหลด bundle ชุดเดียว
+    แล้วใช้ field ข้างในตัดสินใจเรื่อง feature/scoring/threshold ต่อ
+    """
     return joblib.load(path)
 
 
@@ -424,6 +496,13 @@ def score_bundle(bundle: dict[str, Any], features: np.ndarray) -> np.ndarray:
     แล้วค่อยใช้ threshold ตัดสินว่าจะเป็น class ไหน
     """
     estimator_type = bundle["estimator_type"]
+
+    # หมายเหตุสำคัญ:
+    # score ที่คืนจากทุก branch ต้องพยายามให้อยู่ในความหมายเดียวกัน คือ
+    # "ยิ่งมาก = ยิ่งเอนไปทาง no_pregnant"
+    #
+    # จากนั้นชั้น `predict_from_scores()` จะใช้ threshold เดียวกันตัดสินว่า
+    # ควรเป็น no_pregnant หรือ pregnant
     if estimator_type == "mahalanobis":
         mean = np.asarray(bundle["weights"]["mean"], dtype=np.float32)
         precision = np.asarray(bundle["weights"]["precision"], dtype=np.float32)
@@ -449,7 +528,11 @@ def score_bundle(bundle: dict[str, Any], features: np.ndarray) -> np.ndarray:
 
 
 def score_patch_bundle(bundle: dict[str, Any], patch_features: list[np.ndarray]) -> np.ndarray:
-    """คำนวณ score สำหรับ bundle แบบ patch-level."""
+    """คำนวณ score สำหรับ bundle แบบ patch-level.
+
+    ใช้กับ model families ที่ทำงานบน patch embeddings/features ไม่ใช่ feature
+    vector ทั้งภาพก้อนเดียว
+    """
     estimator_type = bundle["estimator_type"]
     if estimator_type == "patchcore":
         scaler = bundle["scaler"]
@@ -481,9 +564,20 @@ def predict_from_scores(scores: np.ndarray, threshold: float) -> np.ndarray:
     - score >= threshold -> 0 (`no_pregnant`)
     - score < threshold -> 1 (`pregnant`)
     """
+    # policy นี้สำคัญมาก เพราะทำให้ target class กลับด้านจาก intuition ที่คนมักเดา
+    # ว่า 1 น่าจะหมายถึง score สูงกว่า threshold
+    #
+    # ใน repo นี้ threshold ถูกนิยามบน score ฝั่ง `no_pregnant`
+    # จึงต้องแปลแบบ:
+    # - score สูงพอ -> 0 = no_pregnant
+    # - score ต่ำกว่า threshold -> 1 = pregnant
     return np.where(scores >= threshold, 0, 1)
 
 
 def label_prediction(target: int) -> str:
-    """แปลง class target เป็น label ข้อความที่ runtime อ่านต่อได้ง่าย."""
+    """แปลง class target เป็น label ข้อความ.
+
+    ชั้น runtime ฝั่ง `app/process_anomaly.py` จะ map label นี้ต่อเป็น contract
+    กลางของ API เช่น `pregnant`, `no pregnant`, `not sure`
+    """
     return TARGET_TO_LABEL[int(target)]
