@@ -1,6 +1,9 @@
-app/asset/ 
-app/uploads/ 
-app/detections/
+app/asset/*
+app/uploads/*
+app/detections/*
+!app/asset/
+!app/uploads/
+!app/detections/
 !app/asset/.gitkeep
 !app/uploads/.gitkeep
 !app/detections/.gitkeep
