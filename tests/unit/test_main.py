@@ -1005,7 +1005,7 @@ def test_retrain_anomaly_starts_background_job(monkeypatch):
     monkeypatch.setattr(main, "start_anomaly_training", fake_start)
     client = TestClient(main.app)
 
-    response = client.post("/anomaly/retrain/", json={})
+    response = client.post("/anomaly/retrain/")
 
     assert response.status_code == 202
     assert response.json()["job_id"] == "job-1"
@@ -1020,54 +1020,6 @@ def test_retrain_anomaly_starts_background_job(monkeypatch):
     }
 
 
-def test_retrain_anomaly_request_overrides_json_config(monkeypatch):
-    seen = {}
-
-    def fake_start(**kwargs):
-        seen.update(kwargs)
-        return {
-            "job_id": "job-override",
-            "status": "queued",
-            "commands": [["python", "train_anomaly_models.py"]],
-        }
-
-    monkeypatch.setattr(
-        main,
-        "load_retrain_anomaly_config",
-        lambda: main.AnomalyTrainRequest(
-            feature_sets="handcrafted,resnet18,dinov2",
-            model_keys="handcrafted__logistic_regression_balanced",
-            batch_size=16,
-            generate_report=True,
-            detail_heatmaps="active",
-            rebuild_index=True,
-            force=False,
-        ),
-    )
-    monkeypatch.setattr(main, "start_anomaly_training", fake_start)
-    client = TestClient(main.app)
-
-    response = client.post(
-        "/anomaly/retrain/",
-        json={
-            "batch_size": 8,
-            "detail_heatmaps": "none",
-        },
-    )
-
-    assert response.status_code == 202
-    assert response.json()["job_id"] == "job-override"
-    assert seen == {
-        "feature_sets": "handcrafted,resnet18,dinov2",
-        "model_keys": "handcrafted__logistic_regression_balanced",
-        "batch_size": 8,
-        "generate_report": True,
-        "detail_heatmaps": "none",
-        "rebuild_index": True,
-        "force": False,
-    }
-
-
 def test_retrain_anomaly_rejects_running_job(monkeypatch):
     def fake_start(**kwargs):
         raise main.AnomalyTrainingAlreadyRunning("job-running")
@@ -1075,23 +1027,10 @@ def test_retrain_anomaly_rejects_running_job(monkeypatch):
     monkeypatch.setattr(main, "start_anomaly_training", fake_start)
     client = TestClient(main.app)
 
-    response = client.post("/anomaly/retrain/", json={})
+    response = client.post("/anomaly/retrain/")
 
     assert response.status_code == 409
     assert "job-running" in response.json()["detail"]
-
-
-def test_retrain_anomaly_force_rejects_running_job(monkeypatch):
-    def fake_start(**kwargs):
-        raise ValueError("force=true ยังไม่รองรับการทับงาน train ที่กำลังรันอยู่: job-running")
-
-    monkeypatch.setattr(main, "start_anomaly_training", fake_start)
-    client = TestClient(main.app)
-
-    response = client.post("/anomaly/retrain/", json={"force": True})
-
-    assert response.status_code == 400
-    assert "force=true" in response.json()["detail"]
 
 
 def test_retrain_anomaly_status_returns_current_job(monkeypatch):
@@ -1106,4 +1045,14 @@ def test_retrain_anomaly_status_returns_current_job(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {"job_id": "job-1", "status": "running"}
+
+
+def test_openapi_retrain_has_no_request_body():
+    client = TestClient(main.app)
+
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    post_schema = response.json()["paths"]["/anomaly/retrain/"]["post"]
+    assert "requestBody" not in post_schema
 

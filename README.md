@@ -271,17 +271,6 @@ config/retrain_anomaly.json
 
 ดังนั้นถ้าจะเปลี่ยนชุด model, `batch_size`, การ rebuild index, หรือการ generate report ให้แก้ไฟล์นี้ไฟล์เดียว
 
-ถ้าจะ override บางค่าเฉพาะครั้งเดียวผ่าน API ให้ส่งเฉพาะ field ที่ต้องการเปลี่ยนได้ เช่น:
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:3014/anomaly/retrain/ `
-  -ContentType 'application/json' `
-  -Body '{"batch_size":8,"detail_heatmaps":"none"}'
-```
-
-ระบบจะเอาค่าที่ส่งมาทับบน default จาก `config/retrain_anomaly.json` เฉพาะ field นั้น
-
 ถ้าต้องการสลับ **anomaly model ที่มีอยู่แล้ว** โดยไม่ train ใหม่:
 
 - แก้ `active_model` ใน  

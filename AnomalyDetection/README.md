@@ -128,17 +128,6 @@ Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 config/retrain_anomaly.json
 ```
 
-ถ้าต้องการ override แค่บาง field ผ่าน API โดยไม่แก้ไฟล์ config:
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:3014/anomaly/retrain/ `
-  -ContentType 'application/json' `
-  -Body '{"batch_size":8,"detail_heatmaps":"none"}'
-```
-
-ระบบจะ merge ค่านี้ทับบน default ใน `config/retrain_anomaly.json`
-
 ## Dataset Layout
 
 โฟลเดอร์นี้พูดถึงเฉพาะ dataset สำหรับ train/validate/test ของ anomaly workflow ไม่ได้อธิบายไฟล์ output ของ V1/V2 runtime

@@ -856,14 +856,12 @@ async def detect_pig_follicle_v2_api(
 @app.post(
     "/anomaly/retrain/",
     summary="Train new anomaly pregnancy model",
-    description="เริ่ม train anomaly model ใหม่แบบ background แล้ว optionally สร้าง index/report ใหม่",
+    description="เริ่ม train anomaly model ใหม่แบบ background โดยอ่านค่าจาก config/retrain_anomaly.json",
     tags=["Anomaly Train"],
     status_code=202,
 )
-async def retrain_anomaly_api(request: AnomalyTrainRequest | None = None):
+async def retrain_anomaly_api():
     payload = load_retrain_anomaly_config()
-    if request is not None:
-        payload = payload.model_copy(update=request.model_dump(exclude_unset=True))
     try:
         job = start_anomaly_training(
             feature_sets=payload.feature_sets,
