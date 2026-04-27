@@ -12,7 +12,6 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PYTHON_EXE = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 VALIDATE_ROOT = REPO_ROOT / "AnomalyDetection" / "asset" / "validate"
 REPORT_DIR = REPO_ROOT / "AnomalyDetection" / "outputs" / "report"
 REPORT_HTML = REPORT_DIR / "index.html"
@@ -103,7 +102,7 @@ def run_anomaly_rows() -> list[dict]:
 def run_yolo_rows(weight: str) -> list[dict]:
     """เรียก runner ฝั่ง YOLO แยก process แล้วแปลง stdout สุดท้ายกลับเป็น rows."""
     result = subprocess.run(
-        [str(PYTHON_EXE), "tests/run_yolo_validate.py", "--weight", weight],
+        [sys.executable, "tests/run_yolo_validate.py", "--weight", weight],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

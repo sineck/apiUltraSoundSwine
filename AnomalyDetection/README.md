@@ -294,6 +294,9 @@ Check status:
 Invoke-RestMethod -Method Get -Uri http://127.0.0.1:3014/anomaly/retrain/status/
 ```
 
+ถ้า train สำเร็จแต่ step หลังบ้านอย่าง compare/report พัง สถานะจะเป็น `succeeded_with_warnings`
+โดย `active_model` ใหม่ยังถูกอัปเดตได้ตามปกติ และให้ดู `failed_step` / `warnings` เพิ่มจาก payload status
+
 `detail_heatmaps` can be `none`, `active`, or `all`. Use `all` only when you really want heatmaps for every test image of every model, because it is slow.
 
 ## Predict One Image

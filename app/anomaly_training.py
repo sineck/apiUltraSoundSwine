@@ -20,7 +20,7 @@ REGISTRY_PATH = ANOMALY_ROOT / "artifacts" / "models" / "model_registry.json"
 REPORT_INDEX = ANOMALY_ROOT / "outputs" / "report" / "index.html"
 JOB_DIR = pathInitial / "logs" / "anomaly_training"
 
-JobStatus = Literal["idle", "queued", "running", "succeeded", "failed"]
+JobStatus = Literal["idle", "queued", "running", "succeeded", "succeeded_with_warnings", "failed"]
 
 
 class AnomalyTrainingAlreadyRunning(RuntimeError):
@@ -42,6 +42,10 @@ class AnomalyTrainingJob:
     registry_path: str = str(REGISTRY_PATH)
     log_file: str | None = None
     commands: list[list[str]] = field(default_factory=list)
+    phase: str = "queued"
+    last_completed_step: str | None = None
+    failed_step: str | None = None
+    warnings: list[str] = field(default_factory=list)
     error: str = ""
 
     def to_dict(self) -> dict:
@@ -98,6 +102,20 @@ def build_training_commands(
     return commands
 
 
+def command_step_name(command: list[str]) -> str:
+    """คืนชื่อ step แบบอ่านง่ายสำหรับ status/log ฝั่ง retrain."""
+    command_text = " ".join(command)
+    if TRAIN_MODULE in command_text:
+        return "train_models"
+    if INDEX_MODULE in command_text:
+        return "build_artifact_index"
+    if REPORT_MODULE in command_text:
+        return "generate_report"
+    if str(COMPARE_SCRIPT) in command_text or "run_validate_compare.py" in command_text:
+        return "validate_compare_report"
+    return command[0]
+
+
 def load_active_model() -> str | None:
     """อ่าน active anomaly model ล่าสุดจาก registry หลัง train จบ."""
     if not REGISTRY_PATH.exists():
@@ -122,12 +140,17 @@ def run_job(job: AnomalyTrainingJob) -> None:
     with _lock:
         job.status = "running"
         job.started_at = utc_now()
+        job.phase = "training"
 
     try:
         log_path = Path(job.log_file or "")
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("w", encoding="utf-8") as log:
-            for command in job.commands:
+            for index, command in enumerate(job.commands):
+                step_name = command_step_name(command)
+                is_training_step = index == 0
+                with _lock:
+                    job.phase = "training" if is_training_step else "post_train"
                 log.write(f"\n$ {' '.join(command)}\n")
                 log.flush()
                 completed = subprocess.run(
@@ -140,13 +163,32 @@ def run_job(job: AnomalyTrainingJob) -> None:
                     check=False,
                 )
                 if completed.returncode != 0:
-                    raise RuntimeError(f"Command failed with exit code {completed.returncode}: {' '.join(command)}")
+                    with _lock:
+                        job.failed_step = step_name
+                    if is_training_step:
+                        raise RuntimeError(f"Training step failed with exit code {completed.returncode}: {' '.join(command)}")
+                    with _lock:
+                        job.status = "succeeded_with_warnings"
+                        job.return_code = 0
+                        job.error = (
+                            f"Post-train step failed with exit code {completed.returncode}: "
+                            f"{' '.join(command)}"
+                        )
+                        job.warnings.append(job.error)
+                        job.last_completed_step = "train_models"
+                        job.active_model = load_active_model()
+                        job.report_path = str(REPORT_INDEX) if REPORT_INDEX.exists() else None
+                        job.finished_at = utc_now()
+                    return
+                with _lock:
+                    job.last_completed_step = step_name
 
         with _lock:
             job.status = "succeeded"
             job.return_code = 0
             job.active_model = load_active_model()
             job.report_path = str(REPORT_INDEX) if REPORT_INDEX.exists() else None
+            job.phase = "completed"
             job.finished_at = utc_now()
     except Exception as exc:
         with _lock:
@@ -155,6 +197,7 @@ def run_job(job: AnomalyTrainingJob) -> None:
             job.error = str(exc)
             job.active_model = load_active_model()
             job.report_path = str(REPORT_INDEX) if REPORT_INDEX.exists() else None
+            job.phase = "failed"
             job.finished_at = utc_now()
 
 
