@@ -1,5 +1,30 @@
 from __future__ import annotations
 
+"""Utility กลางของ anomaly pipeline.
+
+ไฟล์นี้เป็น core library ของสาย anomaly ทั้งฝั่ง train/validate/report และ
+runtime API
+
+บทบาทหลักของไฟล์:
+1. อ่านและ clean ภาพ ultrasound
+2. extract feature หลายแบบ
+   - handcrafted
+   - patch_handcrafted
+   - resnet18
+   - dinov2
+3. โหลด/เซฟ model bundle
+4. คิด score จาก bundle แต่ละชนิด
+5. threshold score ให้กลายเป็น class prediction
+
+หลักคิดของ repo นี้คือ:
+- script ฝั่ง train ไม่ควรเขียน logic feature/scoring ซ้ำ
+- runtime API ก็ไม่ควรมี logic model เฉพาะของตัวเองอีกชุด
+
+ดังนั้น `app/process_anomaly.py` จึง import helper หลักจากไฟล์นี้ไป reuse ตรง ๆ
+แล้วค่อยเติม logic เรื่อง registry path, save path, และ response format ในชั้น
+runtime อีกที
+"""
+
 import json
 import math
 from dataclasses import dataclass
@@ -24,6 +49,11 @@ TARGET_TO_LABEL = {
 
 @dataclass(frozen=True)
 class ImageRow:
+    """ตัวแทนภาพหนึ่งใบพร้อม metadata ขั้นต่ำที่ pipeline anomaly ใช้ร่วมกัน.
+
+    ฟิลด์ `split` และ `label_name` สำคัญกับงาน train/validate ส่วน runtime API
+    จะใส่ค่าเชิง placeholder เช่น `split="api"` และ `label_name="unknown"`
+    """
     path: Path
     split: str
     label_name: str
@@ -31,6 +61,11 @@ class ImageRow:
 
 
 def json_safe(value: Any) -> Any:
+    """แปลง object หลายชนิดให้เขียนลง JSON ได้.
+
+    ใช้ตอนบันทึก metrics/report/model metadata ที่มี numpy scalar, ndarray,
+    หรือ Path ปนอยู่
+    """
     if isinstance(value, dict):
         return {str(k): json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -49,15 +84,26 @@ def json_safe(value: Any) -> Any:
 
 
 def write_json(path: Path, payload: Any) -> None:
+    """เขียน JSON แบบ utf-8 และรองรับอักขระ non-ASCII."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(json_safe(payload), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def load_json(path: Path) -> Any:
+    """อ่าน JSON แบบ utf-8-sig เพื่อกันปัญหา BOM จากไฟล์ที่ถูกเขียนหลายแหล่ง."""
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def discover_dataset(asset_dir: Path) -> list[ImageRow]:
+    """ไล่ dataset tree แล้วคืนรายการ `ImageRow` ทั้งหมด.
+
+    โครงที่คาดหวังคือ:
+    - train/
+    - validate/
+    - test/
+
+    ภายใต้แต่ละ split จะมี folder label เช่น `1_Pregnant`, `2_NoPregnant`
+    """
     rows: list[ImageRow] = []
     for split in ("train", "validate", "test"):
         split_dir = asset_dir / split
@@ -72,6 +118,7 @@ def discover_dataset(asset_dir: Path) -> list[ImageRow]:
 
 
 def summarize_dataset(rows: Iterable[ImageRow]) -> dict[str, dict[str, int]]:
+    """สรุปจำนวนภาพแยกตาม split และ label."""
     summary: dict[str, dict[str, int]] = {}
     for row in rows:
         split_summary = summary.setdefault(row.split, {})
@@ -80,6 +127,7 @@ def summarize_dataset(rows: Iterable[ImageRow]) -> dict[str, dict[str, int]]:
 
 
 def read_bgr_image(path: Path) -> np.ndarray:
+    """อ่านภาพเป็น BGR โดยรองรับ path Windows/UTF-8 ผ่าน `np.fromfile`."""
     image = cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None:
         raise ValueError(f"Cannot read image: {path}")
@@ -87,6 +135,11 @@ def read_bgr_image(path: Path) -> np.ndarray:
 
 
 def ultrasound_sector_mask(image: np.ndarray) -> np.ndarray:
+    """ประมาณ mask ของ sector ultrasound จากความสว่างและ morphology.
+
+    เป้าหมายไม่ใช่ segmentation ที่สมบูรณ์ แต่เพื่อกันพื้นหลัง/กรอบนอก sector
+    ก่อนทำ feature extraction
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     rough_mask = (gray > 14).astype(np.uint8)
     rough_mask = cv2.morphologyEx(rough_mask, cv2.MORPH_CLOSE, np.ones((17, 17), dtype=np.uint8))
@@ -102,6 +155,10 @@ def ultrasound_sector_mask(image: np.ndarray) -> np.ndarray:
 
 
 def remove_common_overlay_zones(image: np.ndarray) -> np.ndarray:
+    """ปิดทับบริเวณ overlay ที่มักมี text/scale bar ตำแหน่งคงที่.
+
+    ใช้ลดอิทธิพลของตัวหนังสือหน้าจอ ultrasound ที่อาจทำให้ feature เอนเอียง
+    """
     cleaned = image.copy()
     height, width = cleaned.shape[:2]
     blackout_zones = [
@@ -116,6 +173,7 @@ def remove_common_overlay_zones(image: np.ndarray) -> np.ndarray:
 
 
 def clean_ultrasound_image(path: Path) -> np.ndarray:
+    """อ่านภาพแล้ว clean ให้เหลือเนื้อภาพ ultrasound มากขึ้นก่อน extract feature."""
     image = read_bgr_image(path)
     sector_mask = ultrasound_sector_mask(image)
     cleaned = image.copy()
@@ -124,12 +182,23 @@ def clean_ultrasound_image(path: Path) -> np.ndarray:
 
 
 def read_gray_image(path: Path, image_size: int = 224) -> np.ndarray:
+    """อ่านภาพ ultrasound แบบ clean แล้ว resize เป็น grayscale มาตรฐาน."""
     image = clean_ultrasound_image(path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     return cv2.resize(image, (image_size, image_size), interpolation=cv2.INTER_AREA)
 
 
 def handcrafted_features(path: Path, image_size: int = 224) -> np.ndarray:
+    """สร้าง handcrafted feature vector จากภาพเดียว.
+
+    feature ชุดนี้ผสมหลายมุมมอง:
+    - histogram
+    - global intensity stats
+    - percentiles
+    - texture/edge
+    - grid-local mean/std
+    - connected component ของบริเวณมืด/สว่าง
+    """
     gray = read_gray_image(path, image_size=image_size)
     gray_float = gray.astype(np.float32) / 255.0
 
@@ -205,10 +274,16 @@ def handcrafted_features(path: Path, image_size: int = 224) -> np.ndarray:
 
 
 def extract_handcrafted(rows: list[ImageRow]) -> np.ndarray:
+    """extract handcrafted feature ให้หลายภาพแล้ว stack เป็น matrix."""
     return np.vstack([handcrafted_features(row.path) for row in rows]).astype(np.float32)
 
 
 def patch_handcrafted_features(path: Path, image_size: int = 224, grid_size: int = 8) -> np.ndarray:
+    """สร้าง handcrafted feature แบบแบ่ง patch หลายช่อง.
+
+    ใช้กับ model families ที่ไม่ได้มองทั้งภาพเป็น vector เดียว แต่ต้องการ
+    feature ราย patch เช่น patchcore/padim_diag
+    """
     gray = read_gray_image(path, image_size=image_size)
     gray_float = gray.astype(np.float32) / 255.0
     patch_features: list[list[float]] = []
@@ -238,10 +313,12 @@ def patch_handcrafted_features(path: Path, image_size: int = 224, grid_size: int
 
 
 def extract_patch_handcrafted(rows: list[ImageRow]) -> list[np.ndarray]:
+    """คืน patch feature ของหลายภาพเป็น list ตามลำดับภาพ input."""
     return [patch_handcrafted_features(row.path) for row in rows]
 
 
 def extract_resnet18(rows: list[ImageRow], batch_size: int = 16, device: str = "auto") -> np.ndarray:
+    """extract deep feature จาก ResNet18 pretrained."""
     import torch
     from PIL import Image
     from torchvision.models import ResNet18_Weights, resnet18
@@ -276,6 +353,7 @@ def extract_resnet18(rows: list[ImageRow], batch_size: int = 16, device: str = "
 
 
 def extract_dinov2(rows: list[ImageRow], batch_size: int = 8, device: str = "auto") -> np.ndarray:
+    """extract deep feature จาก DINOv2 pretrained."""
     import torch
     from PIL import Image
     from torchvision import transforms
@@ -314,6 +392,11 @@ def extract_dinov2(rows: list[ImageRow], batch_size: int = 8, device: str = "aut
 
 
 def get_feature_matrix(rows: list[ImageRow], feature_set: str, batch_size: int = 16) -> np.ndarray:
+    """route กลางสำหรับเลือก feature extractor ตามชื่อ feature set.
+
+    จุดประสงค์คือให้ทั้งฝั่ง train และ runtime เรียกทางเดียวกัน ไม่ต้องมา
+    if/else เลือก extractor ซ้ำเองหลายไฟล์
+    """
     if feature_set == "handcrafted":
         return extract_handcrafted(rows)
     if feature_set == "resnet18":
@@ -324,15 +407,22 @@ def get_feature_matrix(rows: list[ImageRow], feature_set: str, batch_size: int =
 
 
 def save_model_bundle(path: Path, bundle: dict[str, Any]) -> None:
+    """เซฟ bundle ที่รวม estimator, scaler, threshold, metadata ลง `.joblib`."""
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, path)
 
 
 def load_model_bundle(path: Path) -> dict[str, Any]:
+    """โหลด bundle anomaly จาก `.joblib`."""
     return joblib.load(path)
 
 
 def score_bundle(bundle: dict[str, Any], features: np.ndarray) -> np.ndarray:
+    """คำนวณ score สำหรับ bundle ที่ใช้ feature matrix ปกติ.
+
+    score ของ repo นี้ถูกนิยามให้เป็น score ฝั่ง `no_pregnant`
+    แล้วค่อยใช้ threshold ตัดสินว่าจะเป็น class ไหน
+    """
     estimator_type = bundle["estimator_type"]
     if estimator_type == "mahalanobis":
         mean = np.asarray(bundle["weights"]["mean"], dtype=np.float32)
@@ -359,6 +449,7 @@ def score_bundle(bundle: dict[str, Any], features: np.ndarray) -> np.ndarray:
 
 
 def score_patch_bundle(bundle: dict[str, Any], patch_features: list[np.ndarray]) -> np.ndarray:
+    """คำนวณ score สำหรับ bundle แบบ patch-level."""
     estimator_type = bundle["estimator_type"]
     if estimator_type == "patchcore":
         scaler = bundle["scaler"]
@@ -384,8 +475,15 @@ def score_patch_bundle(bundle: dict[str, Any], patch_features: list[np.ndarray])
 
 
 def predict_from_scores(scores: np.ndarray, threshold: float) -> np.ndarray:
+    """แปลง score เป็น target class.
+
+    กติกาปัจจุบัน:
+    - score >= threshold -> 0 (`no_pregnant`)
+    - score < threshold -> 1 (`pregnant`)
+    """
     return np.where(scores >= threshold, 0, 1)
 
 
 def label_prediction(target: int) -> str:
+    """แปลง class target เป็น label ข้อความที่ runtime อ่านต่อได้ง่าย."""
     return TARGET_TO_LABEL[int(target)]
