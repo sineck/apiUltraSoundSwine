@@ -35,12 +35,18 @@ from anomaly_lib import (  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
+    """อ่าน flag ของ runner นี้.
+
+    ตอนนี้ intentionally มี flag เดียวคือ `--write-report`
+    เพื่อให้สคริปต์เดียวรัน compare แล้วเขียน HTML/JSON ได้จบ
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-report", action="store_true")
     return parser.parse_args()
 
 
 def folder_truth(folder_name: str) -> str:
+    """map ชื่อโฟลเดอร์ validate ให้เป็น binary target ที่ใช้เทียบ model."""
     mapping = {
         "1_Pregnant": "pregnant",
         "2_NoPregnant": "no_pregnant",
@@ -50,6 +56,7 @@ def folder_truth(folder_name: str) -> str:
 
 
 def resolve_active_model(registry_path: Path) -> Path:
+    """resolve ไฟล์ model ของ active anomaly run จาก registry ปัจจุบัน."""
     registry = load_json(registry_path)
     active = registry["active_model"]
     run_name, model_key = active.split("/", 1)
@@ -63,6 +70,7 @@ def resolve_active_model(registry_path: Path) -> Path:
 
 
 def run_anomaly_rows() -> list[dict]:
+    """วิ่ง anomaly model ปัจจุบันกับภาพทุกไฟล์ใน validate แล้วเก็บผลแบบ row-wise."""
     registry_path = REPO_ROOT / "AnomalyDetection" / "artifacts" / "models" / "model_registry.json"
     model_path = resolve_active_model(registry_path)
     bundle = load_model_bundle(model_path)
@@ -91,6 +99,7 @@ def run_anomaly_rows() -> list[dict]:
 
 
 def run_yolo_rows(weight: str) -> list[dict]:
+    """เรียก runner ฝั่ง YOLO แยก process แล้วแปลง stdout สุดท้ายกลับเป็น rows."""
     result = subprocess.run(
         [str(PYTHON_EXE), "tests/run_yolo_validate.py", "--weight", weight],
         cwd=REPO_ROOT,
@@ -103,6 +112,11 @@ def run_yolo_rows(weight: str) -> list[dict]:
 
 
 def build_agree_pregnant_ensemble(rows: list[dict], left_model: str, right_model: str, ensemble_name: str) -> list[dict]:
+    """สร้าง ensemble แบบ conservative.
+
+    กติกาคือสองโมเดลต้องตอบ `pregnant` พร้อมกันเท่านั้น
+    ถ้าไม่ตรงกัน หรือมีฝั่งใดตอบอย่างอื่น จะถือเป็น `no_pregnant`
+    """
     left_rows = {(row["folder"], row["file"]): row for row in rows if row["model"] == left_model}
     right_rows = {(row["folder"], row["file"]): row for row in rows if row["model"] == right_model}
     combined_rows: list[dict] = []
@@ -126,6 +140,7 @@ def build_agree_pregnant_ensemble(rows: list[dict], left_model: str, right_model
 
 
 def summarize(rows: list[dict]) -> list[dict]:
+    """ยุบผลรายภาพเป็น summary ต่อ model/ต่อ folder เพื่อดู distribution เร็ว ๆ."""
     buckets: dict[tuple[str, str], dict] = {}
     for row in rows:
         key = (row["model"], row["folder"])
@@ -165,6 +180,7 @@ def summarize(rows: list[dict]) -> list[dict]:
 
 
 def compute_binary_metrics(rows: list[dict]) -> dict:
+    """คำนวณ precision/recall/F1 แบบ binary ตามกติกา validate ของ repo นี้."""
     binary_rows = [row for row in rows if row["truth"] in {"pregnant", "no_pregnant"}]
     total = len(binary_rows)
     correct = sum(1 for row in binary_rows if row["prediction"] == row["truth"])
@@ -195,6 +211,13 @@ def compute_binary_metrics(rows: list[dict]) -> dict:
 
 
 def choose_recommendations(model_metrics: list[dict]) -> dict:
+    """เลือก model แนะนำตาม policy ที่ใช้ในรายงาน.
+
+    แยกเป็น 3 แบบ:
+    - เน้นจับท้องก่อน (pregnant recall-first)
+    - เน้นไม่พลาดไม่ท้องก่อน (no_pregnant recall-first)
+    - เน้นสมดุล precision/recall ของไม่ท้อง (no_pregnant F1-first)
+    """
     pregnant_pick = max(
         model_metrics,
         key=lambda item: (
@@ -227,6 +250,7 @@ def choose_recommendations(model_metrics: list[dict]) -> dict:
 
 
 def build_html(report: dict) -> str:
+    """render รายงาน compare เป็น HTML ไฟล์เดียวสำหรับเปิดดูใน browser."""
     generated_at = html.escape(report["generated_at"])
     comparison_rows = []
     for item in report["models"]:
@@ -384,6 +408,7 @@ def build_html(report: dict) -> str:
 
 
 def build_report() -> dict:
+    """สร้าง payload รายงานเต็มจาก anomaly + yolo 2 weight + ensemble."""
     all_rows = []
     all_rows.extend(run_anomaly_rows())
     all_rows.extend(run_yolo_rows("best.pt"))
@@ -419,12 +444,14 @@ def build_report() -> dict:
 
 
 def write_report_files(report: dict) -> None:
+    """เขียน report_data.json และ index.html ลง outputs/report."""
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_JSON.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     REPORT_HTML.write_text(build_html(report), encoding="utf-8")
 
 
 def print_table(title: str, rows: list[dict], columns: list[str]) -> None:
+    """พิมพ์ตารางลง console แบบอ่านง่ายพอสำหรับ debug/compare เร็ว ๆ."""
     print(title)
     widths = {column: max(len(column), *(len(str(row.get(column, ""))) for row in rows)) for column in columns}
     print(" | ".join(column.ljust(widths[column]) for column in columns))
@@ -435,6 +462,16 @@ def print_table(title: str, rows: list[dict], columns: list[str]) -> None:
 
 
 def main() -> int:
+    """entrypoint ของ compare runner.
+
+    default behavior:
+    - รัน compare ทั้ง 4 model
+    - พิมพ์ SUMMARY และ DETAIL ลง console
+
+    ถ้าใส่ `--write-report`:
+    - สร้าง report payload
+    - เขียน HTML/JSON ลง outputs/report
+    """
     args = parse_args()
 
     all_rows = []

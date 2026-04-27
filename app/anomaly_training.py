@@ -23,11 +23,13 @@ JobStatus = Literal["idle", "queued", "running", "succeeded", "failed"]
 
 
 class AnomalyTrainingAlreadyRunning(RuntimeError):
+    """raise เมื่อมี job retrain เดิมกำลัง queued/running อยู่."""
     pass
 
 
 @dataclass
 class AnomalyTrainingJob:
+    """state object ของ retrain job หนึ่งตัวที่ API ใช้รายงานกลับไปยัง client."""
     job_id: str
     status: JobStatus
     created_at: str
@@ -50,10 +52,12 @@ _current_job: AnomalyTrainingJob | None = None
 
 
 def utc_now() -> str:
+    """คืน timestamp UTC แบบ ISO เพื่อให้ log/job status เทียบกันข้ามเครื่องได้ง่าย."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def current_anomaly_training_job() -> dict:
+    """คืน snapshot ของ job ปัจจุบัน หรือสถานะ idle ถ้ายังไม่เคย start."""
     with _lock:
         if _current_job is None:
             return {
@@ -72,6 +76,13 @@ def build_training_commands(
     detail_heatmaps: str,
     rebuild_index: bool,
 ) -> list[list[str]]:
+    """สร้าง command list ของ retrain pipeline ตาม config กลาง.
+
+    ลำดับ intentionally คงที่:
+    1. train anomaly models
+    2. rebuild artifact index ถ้าถูกเปิดไว้
+    3. generate report ถ้าถูกเปิดไว้
+    """
     commands = [[sys.executable, str(TRAIN_SCRIPT), "--batch-size", str(batch_size)]]
     if feature_sets:
         commands[0].extend(["--feature-sets", feature_sets])
@@ -85,6 +96,7 @@ def build_training_commands(
 
 
 def load_active_model() -> str | None:
+    """อ่าน active anomaly model ล่าสุดจาก registry หลัง train จบ."""
     if not REGISTRY_PATH.exists():
         return None
     registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8-sig"))
@@ -92,6 +104,14 @@ def load_active_model() -> str | None:
 
 
 def run_job(job: AnomalyTrainingJob) -> None:
+    """worker จริงของ background retrain thread.
+
+    ฟังก์ชันนี้รับผิดชอบ:
+    - mark สถานะ queued -> running -> succeeded/failed
+    - รัน command ตาม pipeline ที่ build ไว้
+    - เขียน stdout/stderr ลง log file
+    - snapshot active_model/report_path หลังงานจบ
+    """
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
@@ -144,6 +164,11 @@ def start_anomaly_training(
     rebuild_index: bool = True,
     force: bool = False,
 ) -> dict:
+    """entrypoint กลางของ retrain API.
+
+    ฟังก์ชันนี้ validate input, กัน job ซ้อน, สร้าง job metadata, แล้วปล่อย
+    background thread ไปทำงานจริง โดย route จะได้ response กลับเร็วพร้อม job_id
+    """
     if batch_size < 1:
         raise ValueError("batch_size must be >= 1")
     if detail_heatmaps not in {"none", "active", "all"}:

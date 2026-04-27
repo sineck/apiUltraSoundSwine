@@ -300,7 +300,13 @@ def detect_saved_yolo_image(display_name: str, save_path: str) -> PregnancyDetec
 
 
 def detect_saved_ensemble_image(display_name: str, save_path: str) -> PregnancyDetectionOutcome:
-    """ใช้ anomaly + YOLO ร่วมกัน โดยถือ pregnant เฉพาะเมื่อทั้งสองฝั่งตรงกันว่า pregnant."""
+    """รวมผล anomaly และ YOLO ให้เหลือคำตอบเดียวสำหรับ V2.
+
+    กติกา intentionally simple:
+    - ทั้งสอง backend ต้องตอบ `pregnant` พร้อมกัน ถึงจะถือว่า final เป็น `pregnant`
+    - ถ้าไม่ตรงกัน หรือมีฝั่งใดตอบอย่างอื่น ให้ถือเป็น `no pregnant`
+    - ถ้า backend ใดพัง ให้คืน error ตรง ๆ เพื่อไม่กลบปัญหา runtime
+    """
     anomaly_result = detect_saved_anomaly_image(display_name, save_path)
     yolo_outcome = detect_saved_yolo_image(display_name, save_path)
 
@@ -334,7 +340,12 @@ def detect_saved_ensemble_image(display_name: str, save_path: str) -> PregnancyD
 
 
 def detect_saved_pregnancy_image_with_backend(display_name: str, save_path: str) -> PregnancyDetectionOutcome:
-    """เลือก backend จาก config แล้วรวมผลให้อยู่รูปกลางเดียวก่อนส่งต่อไป response/DB."""
+    """จุดรวมกลางของ V2 pregnancy inference.
+
+    ฟังก์ชันนี้คือ source-of-truth ของการเลือก backend จาก
+    `PREGNANCY_DETECT_MODEL_V2` แล้ว normalize ผลให้ route, DB, และ Gemini
+    เห็นรูปข้อมูลเดียวกันเสมอ
+    """
     backend = selected_pregnancy_model()
 
     if backend in {"anomaly", "new"}:
@@ -351,7 +362,11 @@ def detect_saved_pregnancy_image_with_backend(display_name: str, save_path: str)
 
 
 def selected_pregnancy_model() -> str:
-    """อ่าน backend ที่ active จริงจาก config runtime."""
+    """อ่านชื่อ backend V2 ที่ active จริงจาก process env ปัจจุบัน.
+
+    ค่านี้ต้องถูกโหลดมาจาก `config/.env` ตอน start process แล้วเท่านั้น
+    ไม่มี request-time reload หรือ fallback หลายชั้นอีก
+    """
     return os.getenv("PREGNANCY_DETECT_MODEL_V2", "anomaly").strip().lower()
 
 
@@ -413,7 +428,12 @@ def build_ultrasound_db_payload(
     path_for_db: str,
     fallback_id_value: str,
 ) -> dict:
-    """ประกอบ payload กลางสำหรับ insert UltraSoudPigAI ให้ image/PDF ใช้กติกา OCR ชุดเดียวกัน."""
+    """ประกอบ payload กลางสำหรับ insert UltraSoudPigAI.
+
+    จุดประสงค์ของ helper นี้คือทำให้ V2 สาย image และ V2 สาย PDF
+    ใช้กติกา OCR / fallback / legacy label ชุดเดียวกัน ไม่ให้ความหมาย field
+    drift คนละทางในตารางเดียวกัน
+    """
     ocr_result = extract_info_from_image(save_path)
     if ocr_result is None:
         ocr_result = default_ocr_info()
@@ -443,7 +463,11 @@ def persist_image_detection_to_db(
     save_path: str,
     outcome: PregnancyDetectionOutcome,
 ) -> ImageResult:
-    """เขียนผลของ V2 สายรูปลง DB โดยใช้ label legacy เดียวกับสาย PDF."""
+    """เขียนผลของ V2 สายรูปลง DB ถ้า config เปิดไว้.
+
+    แม้ route จะเป็นสาย image แต่ `results_ai` ยังต้องถูก normalize เป็น legacy
+    label เดียวกับ PDF flow เพื่อให้รายงานและระบบเดิมอ่านต่อได้
+    """
     reload_runtime_config()
     if not should_insert_ultrasound_to_db() or outcome.result.result == "error":
         return outcome.result
@@ -467,6 +491,11 @@ def persist_image_detection_to_db(
 
 
 class AnomalyTrainRequest(BaseModel):
+    """schema กลางของ default retrain config.
+
+    ตอนนี้ route `/anomaly/retrain/` ไม่รับ body แล้ว แต่ class นี้ยังใช้เป็น
+    typed config model สำหรับ `config/retrain_anomaly.json` และ helper ฝั่ง retrain
+    """
     feature_sets: str | None = Field(
         default=None,
         description="เช่น handcrafted,resnet18,dinov2 ถ้าไม่ส่งจะใช้ default ของ trainer",
@@ -483,7 +512,7 @@ class AnomalyTrainRequest(BaseModel):
 
 
 def load_retrain_anomaly_config() -> AnomalyTrainRequest:
-    """โหลดค่า default ของ retrain จากไฟล์ JSON ฝั่ง runtime."""
+    """โหลด retrain default จาก source-of-truth เดียวคือ `config/retrain_anomaly.json`."""
     if not RETRAIN_CONFIG_PATH.exists():
         raise FileNotFoundError(f"Missing retrain config: {RETRAIN_CONFIG_PATH}")
     with RETRAIN_CONFIG_PATH.open("r", encoding="utf-8") as file:
