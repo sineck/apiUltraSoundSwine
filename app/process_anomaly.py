@@ -37,12 +37,29 @@ ANOMALY_ROOT = pathInitial / "AnomalyDetection"
 ANOMALY_SCRIPT_DIR = ANOMALY_ROOT / "scripts"
 ANOMALY_REGISTRY = ANOMALY_ROOT / "artifacts" / "models" / "model_registry.json"
 
-# runtime ฝั่ง `app/` อยู่คนละ tree กับ utility ฝั่ง `AnomalyDetection/scripts`
-# จึงต้องเติม path นี้ก่อน import เพื่อ reuse logic กลางตัวเดียวกัน
+# สำคัญ:
+# - `process_anomaly.py` อยู่ใต้ `app/`
+# - แต่ anomaly core library จริงอยู่ที่
+#   `D:\apiUltraSoundSwine\AnomalyDetection\scripts\anomaly_lib.py`
+#
+# ดังนั้นถ้าเปิดไฟล์นี้แล้วเห็น `from anomaly_lib import ...` จะหาไฟล์ชื่อ
+# `app/anomaly_lib.py` ไม่เจอ ซึ่งเป็นเรื่องปกติ เพราะ import นี้ไม่ได้อิง path
+# เดิมของ package `app`
+#
+# ที่มัน import ได้ เพราะเราเติม folder
+# `D:\apiUltraSoundSwine\AnomalyDetection\scripts`
+# เข้า `sys.path` ก่อน ทำให้ Python มองว่าไฟล์ `anomaly_lib.py` ใน folder นั้น
+# เป็น top-level module ชื่อ `anomaly_lib`
+#
+# สรุปสั้น:
+# - ชื่อ import ที่เห็น: `anomaly_lib`
+# - ไฟล์จริงบนดิสก์: `AnomalyDetection/scripts/anomaly_lib.py`
+# - เหตุผลที่ทำแบบนี้: reuse logic train/validate/runtime ชุดเดียวกัน
 if str(ANOMALY_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(ANOMALY_SCRIPT_DIR))
 
 from anomaly_lib import (  # noqa: E402
+    # import จาก `AnomalyDetection/scripts/anomaly_lib.py` โดยตรง หลังเติม sys.path แล้ว
     # ImageRow = row มาตรฐานที่ lib anomaly ใช้แทนภาพหนึ่งใบพร้อม metadata
     ImageRow,
     # extract_patch_handcrafted = แตก feature แบบ patch-based handcrafted
