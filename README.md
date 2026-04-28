@@ -9,6 +9,10 @@
 
 ระบบนี้มีทั้ง **V1** ของเดิมที่ยังต้องคงไว้ และ **V2** ที่เลือก backend model ได้จาก config
 
+ถ้าต้องการ owner doc ระดับระบบที่สรุป route, config, retrain flow, และ source of truth ให้ดู:
+
+- `Documentation/system_specification_v2.md`
+
 ## เส้นทางที่ใช้งานจริง
 
 ### V1
